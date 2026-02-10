@@ -53,6 +53,7 @@ Thumbs.db
 
 # Docker
 docker-compose.override.yml
+.env
 
 # Temporary files
 tmp/
