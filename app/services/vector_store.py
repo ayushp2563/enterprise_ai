@@ -89,7 +89,7 @@ class VectorStoreService:
         self,
         query_embedding: List[float],
         top_k: int = 5,
-        threshold: float = 0.0
+        threshold: float = -1.0
     ) -> List[Dict[str, Any]]:
         """
         Perform similarity search using cosine distance.
@@ -117,14 +117,13 @@ class VectorStoreService:
                         1 - (dc.embedding <=> %s::vector) as similarity
                     FROM document_chunks dc
                     JOIN documents d ON dc.document_id = d.id
-                    WHERE 1 - (dc.embedding <=> %s::vector) > %s
                     ORDER BY dc.embedding <=> %s::vector
                     LIMIT %s
                 """
                 
                 cursor.execute(
                     query,
-                    (query_embedding, query_embedding, threshold, query_embedding, top_k)
+                    (query_embedding, query_embedding, top_k)
                 )
                 
                 results = []
