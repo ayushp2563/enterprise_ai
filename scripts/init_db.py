@@ -1,18 +1,28 @@
 #!/usr/bin/env python3
 """
-Database initialization script.
-Creates tables and enables pgvector extension.
+Database initialization script with multi-tenancy support.
+Creates tables, enables pgvector extension, and runs migrations.
 """
 
 import psycopg2
 import sys
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
 DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/enterprise_ai')
+
+
+def run_sql_file(cursor, filepath):
+    """Execute SQL commands from a file."""
+    print(f"Running SQL file: {filepath}")
+    with open(filepath, 'r') as f:
+        sql = f.read()
+        cursor.execute(sql)
+    print(f"✅ Completed: {filepath}")
 
 
 def init_database():
@@ -29,8 +39,8 @@ def init_database():
         print("Enabling pgvector extension...")
         cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         
-        # Create documents table
-        print("Creating documents table...")
+        # Create base documents table (if not exists)
+        print("Creating base documents table...")
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS documents (
                 id SERIAL PRIMARY KEY,
@@ -92,13 +102,45 @@ def init_database():
             );
         """)
         
+        # Run migrations
+        print("\n" + "="*60)
+        print("Running migrations...")
+        print("="*60)
+        
+        migrations_dir = Path(__file__).parent / 'migrations'
+        if migrations_dir.exists():
+            migration_files = sorted(migrations_dir.glob('*.sql'))
+            for migration_file in migration_files:
+                run_sql_file(cursor, migration_file)
+        else:
+            print("No migrations directory found, skipping migrations.")
+        
+        print("\n" + "="*60)
         print("✅ Database initialization completed successfully!")
+        print("="*60)
+        
+        # Print summary
+        cursor.execute("SELECT COUNT(*) FROM companies;")
+        company_count = cursor.fetchone()[0]
+        print(f"\n📊 Database Summary:")
+        print(f"   Companies: {company_count}")
+        
+        if company_count > 0:
+            cursor.execute("SELECT COUNT(*) FROM users;")
+            user_count = cursor.fetchone()[0]
+            print(f"   Users: {user_count}")
+            
+            cursor.execute("SELECT COUNT(*) FROM documents;")
+            doc_count = cursor.fetchone()[0]
+            print(f"   Documents: {doc_count}")
         
         cursor.close()
         conn.close()
         
     except Exception as e:
         print(f"❌ Error initializing database: {str(e)}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 

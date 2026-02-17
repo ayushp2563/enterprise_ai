@@ -7,6 +7,7 @@ class DocumentBase(BaseModel):
     """Base document model."""
     title: str
     content: str
+    category: Optional[str] = None
     metadata: Optional[dict] = None
 
 
@@ -18,6 +19,9 @@ class DocumentCreate(DocumentBase):
 class Document(DocumentBase):
     """Document model with ID and timestamps."""
     id: int
+    company_id: int
+    uploaded_by: Optional[int] = None
+    is_active: bool
     created_at: datetime
     updated_at: datetime
     
@@ -49,6 +53,10 @@ class QueryResponse(BaseModel):
     sources: List[dict]
     query_time: float
     model_used: str
+    confidence_score: float
+    should_escalate: bool
+    escalation_reason: Optional[str] = None
+    hr_contact: Optional[dict] = None
 
 
 class QueryLog(BaseModel):
@@ -57,7 +65,31 @@ class QueryLog(BaseModel):
     question: str
     answer: str
     sources: dict
+    query_time: float
     created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class HREscalationResponse(BaseModel):
+    """HR escalation response model."""
+    id: int
+    company_id: int
+    user_id: int
+    question: str
+    reason: str
+    status: str
+    query_log_id: Optional[int] = None
+    hr_response: Optional[str] = None
+    resolved_by: Optional[int] = None
+    resolved_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class HREscalationUpdate(BaseModel):
+    """HR escalation update model."""
+    response: str
     
     class Config:
         from_attributes = True

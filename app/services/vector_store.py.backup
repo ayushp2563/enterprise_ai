@@ -88,16 +88,14 @@ class VectorStoreService:
     def similarity_search(
         self,
         query_embedding: List[float],
-        company_id: int,
         top_k: int = 5,
         threshold: float = -1.0
     ) -> List[Dict[str, Any]]:
         """
-        Perform similarity search using cosine distance (company-scoped).
+        Perform similarity search using cosine distance.
         
         Args:
             query_embedding: Query embedding vector
-            company_id: Company ID for data isolation
             top_k: Number of results to return
             threshold: Minimum similarity threshold
             
@@ -116,18 +114,16 @@ class VectorStoreService:
                         dc.chunk_index,
                         d.title,
                         d.metadata,
-                        d.category,
                         1 - (dc.embedding <=> %s::vector) as similarity
                     FROM document_chunks dc
                     JOIN documents d ON dc.document_id = d.id
-                    WHERE d.company_id = %s AND d.is_active = true
                     ORDER BY dc.embedding <=> %s::vector
                     LIMIT %s
                 """
                 
                 cursor.execute(
                     query,
-                    (query_embedding, company_id, query_embedding, top_k)
+                    (query_embedding, query_embedding, top_k)
                 )
                 
                 results = []
@@ -139,11 +135,10 @@ class VectorStoreService:
                         "chunk_index": row[3],
                         "document_title": row[4],
                         "metadata": row[5],
-                        "category": row[6],
-                        "similarity": float(row[7])
+                        "similarity": float(row[6])
                     })
                 
-                logger.info(f"Found {len(results)} similar chunks for company {company_id}")
+                logger.info(f"Found {len(results)} similar chunks")
                 return results
                 
         except Exception as e:

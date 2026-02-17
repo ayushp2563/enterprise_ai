@@ -1,7 +1,7 @@
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import query, documents, workflows
+from app.api import query, documents, workflows, auth, users, hr
 from app.config import get_settings
 
 # Configure logging
@@ -17,7 +17,7 @@ settings = get_settings()
 app = FastAPI(
     title="Enterprise AI Assistant",
     description="AI-Powered Enterprise Assistant with RAG and Workflow Automation",
-    version="1.0.0"
+    version="2.0.0"
 )
 
 # Configure CORS
@@ -30,9 +30,12 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(auth.router)
+app.include_router(users.router)
 app.include_router(query.router)
 app.include_router(documents.router)
 app.include_router(workflows.router)
+app.include_router(hr.router)
 
 
 @app.get("/")
