@@ -22,10 +22,12 @@ export interface DocumentUploadRequest {
 export interface QueryRequest {
     question: string;
     top_k?: number;
+    conversation_id?: string;
 }
 
 export interface QueryResponse {
     answer: string;
+    conversation_id?: string;
     sources: Array<{
         document_id: number;
         title: string;
