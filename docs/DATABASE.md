@@ -10,6 +10,7 @@ This document describes the schema introduced through:
 - `scripts/migrations/001_add_multi_tenancy.sql`
 - `scripts/migrations/002_strengthen_core_schema.sql`
 - `scripts/migrations/003_secure_authentication.sql`
+- `scripts/migrations/004_membership_scoped_actors.sql`
 
 Migration 002 is intentionally backward compatible with the current FastAPI application. The existing `companies` table remains the physical tenant table, and existing integer primary and foreign keys remain in place. Renaming functioning tables or replacing every key in one migration would add risk without improving tenant isolation.
 
