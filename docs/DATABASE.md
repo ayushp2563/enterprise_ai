@@ -264,6 +264,10 @@ These constraints reject invalid state even if a future code path bypasses Pydan
 - A failed migration rolls back.
 - Migration 001 is idempotent so databases created before the ledger can safely
   run it once more and record it atomically.
+- Migration 002 fails with an explicit error if legacy rows contain invalid
+  enum/rating values, duplicate chunk positions, or cross-company references.
+  Those rows require deliberate data remediation; the migration does not guess
+  which tenant or state is correct.
 - Migration files are applied in filename order.
 
 Production deployments should run migrations as an explicit release step before starting the new application version.

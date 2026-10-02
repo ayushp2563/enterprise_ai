@@ -22,9 +22,22 @@ def ensure_migrations_table(conn):
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS schema_migrations (
                 version VARCHAR(100) PRIMARY KEY,
-                filename VARCHAR(255) NOT NULL,
+                filename VARCHAR(255),
                 applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
+
+            ALTER TABLE schema_migrations
+                ADD COLUMN IF NOT EXISTS filename VARCHAR(255);
+            ALTER TABLE schema_migrations
+                ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ
+                    NOT NULL DEFAULT NOW();
+
+            UPDATE schema_migrations
+            SET filename = 'legacy_' || version || '.sql'
+            WHERE filename IS NULL;
+
+            ALTER TABLE schema_migrations
+                ALTER COLUMN filename SET NOT NULL;
         """)
     conn.commit()
 

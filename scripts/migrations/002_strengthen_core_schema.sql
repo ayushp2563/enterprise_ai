@@ -6,6 +6,109 @@
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- Refuse to hide legacy data corruption. These checks provide actionable
+-- failures before tenant constraints and unique indexes are installed.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM users
+        WHERE role NOT IN ('company_admin', 'hr_manager', 'employee')
+    ) THEN
+        RAISE EXCEPTION 'Migration 002: users contains unsupported role values';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM query_logs
+        WHERE confidence_score IS NOT NULL
+          AND (confidence_score < 0 OR confidence_score > 1)
+    ) THEN
+        RAISE EXCEPTION 'Migration 002: query_logs contains confidence scores outside 0..1';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM query_logs
+        WHERE feedback_rating IS NOT NULL
+          AND feedback_rating NOT BETWEEN 1 AND 5
+    ) THEN
+        RAISE EXCEPTION 'Migration 002: query_logs contains feedback ratings outside 1..5';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM hr_escalations
+        WHERE status IS NOT NULL
+          AND status NOT IN ('pending', 'contacted', 'resolved')
+    ) THEN
+        RAISE EXCEPTION 'Migration 002: hr_escalations contains unsupported status values';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM document_chunks
+        GROUP BY document_id, chunk_index
+        HAVING COUNT(*) > 1
+    ) THEN
+        RAISE EXCEPTION 'Migration 002: duplicate document chunk positions must be resolved';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM invitations AS i
+        JOIN users AS u ON u.id = i.invited_by
+        WHERE i.company_id <> u.company_id
+    ) THEN
+        RAISE EXCEPTION 'Migration 002: cross-company invitation inviter detected';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM documents AS d
+        JOIN users AS u ON u.id = d.uploaded_by
+        WHERE d.company_id <> u.company_id
+    ) THEN
+        RAISE EXCEPTION 'Migration 002: cross-company document uploader detected';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM query_logs AS q
+        JOIN users AS u ON u.id = q.user_id
+        WHERE q.company_id <> u.company_id
+    ) THEN
+        RAISE EXCEPTION 'Migration 002: cross-company query log user detected';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM hr_escalations AS h
+        JOIN query_logs AS q ON q.id = h.query_log_id
+        WHERE h.company_id <> q.company_id
+    ) THEN
+        RAISE EXCEPTION 'Migration 002: cross-company escalation query detected';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM hr_escalations AS h
+        JOIN users AS u ON u.id = h.user_id
+        WHERE h.company_id <> u.company_id
+    ) THEN
+        RAISE EXCEPTION 'Migration 002: cross-company escalation user detected';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM hr_escalations AS h
+        JOIN users AS u ON u.id = h.resolved_by
+        WHERE h.company_id <> u.company_id
+    ) THEN
+        RAISE EXCEPTION 'Migration 002: cross-company escalation resolver detected';
+    END IF;
+END $$;
+
 -- ============================================================================
 -- 1. ADD STABLE PUBLIC IDENTIFIERS WITHOUT BREAKING CURRENT INTEGER FOREIGN KEYS
 -- ============================================================================
@@ -70,20 +173,13 @@ CREATE INDEX IF NOT EXISTS idx_memberships_company_role_active
     ON memberships(company_id, role)
     WHERE is_active = true;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'fk_memberships_user_company'
-          AND conrelid = 'public.memberships'::regclass
-    ) THEN
-        ALTER TABLE memberships
-            ADD CONSTRAINT fk_memberships_user_company
-            FOREIGN KEY (user_id, company_id)
-            REFERENCES users(id, company_id)
-            ON DELETE CASCADE;
-    END IF;
-END $$;
+ALTER TABLE memberships
+    DROP CONSTRAINT IF EXISTS fk_memberships_user_company;
+ALTER TABLE memberships
+    ADD CONSTRAINT fk_memberships_user_company
+    FOREIGN KEY (user_id, company_id)
+    REFERENCES users(id, company_id)
+    ON DELETE CASCADE;
 
 DROP TRIGGER IF EXISTS update_memberships_updated_at ON memberships;
 CREATE TRIGGER update_memberships_updated_at
@@ -138,19 +234,12 @@ CREATE INDEX IF NOT EXISTS idx_documents_company_category_active
     ON documents(company_id, category)
     WHERE is_active = true;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'fk_documents_uploader_company'
-          AND conrelid = 'public.documents'::regclass
-    ) THEN
-        ALTER TABLE documents
-            ADD CONSTRAINT fk_documents_uploader_company
-            FOREIGN KEY (uploaded_by, company_id)
-            REFERENCES users(id, company_id);
-    END IF;
-END $$;
+ALTER TABLE documents
+    DROP CONSTRAINT IF EXISTS fk_documents_uploader_company;
+ALTER TABLE documents
+    ADD CONSTRAINT fk_documents_uploader_company
+    FOREIGN KEY (uploaded_by, company_id)
+    REFERENCES users(id, company_id);
 
 -- ============================================================================
 -- 4. TENANT-SAFE DOCUMENT CHUNKS AND CITATION METADATA
@@ -172,38 +261,22 @@ WHERE dc.document_id = d.id
 ALTER TABLE document_chunks
     ALTER COLUMN company_id SET NOT NULL;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'fk_document_chunks_company'
-          AND conrelid = 'public.document_chunks'::regclass
-    ) THEN
-        ALTER TABLE document_chunks
-            ADD CONSTRAINT fk_document_chunks_company
-            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE;
-    END IF;
-END $$;
+ALTER TABLE document_chunks
+    DROP CONSTRAINT IF EXISTS fk_document_chunks_company;
+ALTER TABLE document_chunks
+    ADD CONSTRAINT fk_document_chunks_company
+    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_documents_id_company
     ON documents(id, company_id);
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'fk_document_chunks_document_company'
-          AND conrelid = 'public.document_chunks'::regclass
-    ) THEN
-        ALTER TABLE document_chunks
-            ADD CONSTRAINT fk_document_chunks_document_company
-            FOREIGN KEY (document_id, company_id)
-            REFERENCES documents(id, company_id)
-            ON DELETE CASCADE;
-    END IF;
-END $$;
+ALTER TABLE document_chunks
+    DROP CONSTRAINT IF EXISTS fk_document_chunks_document_company;
+ALTER TABLE document_chunks
+    ADD CONSTRAINT fk_document_chunks_document_company
+    FOREIGN KEY (document_id, company_id)
+    REFERENCES documents(id, company_id)
+    ON DELETE CASCADE;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_document_chunks_document_position
     ON document_chunks(document_id, chunk_index);
@@ -246,20 +319,13 @@ CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_claim
 CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_company_status
     ON ingestion_jobs(company_id, status, created_at DESC);
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'fk_ingestion_jobs_document_company'
-          AND conrelid = 'public.ingestion_jobs'::regclass
-    ) THEN
-        ALTER TABLE ingestion_jobs
-            ADD CONSTRAINT fk_ingestion_jobs_document_company
-            FOREIGN KEY (document_id, company_id)
-            REFERENCES documents(id, company_id)
-            ON DELETE CASCADE;
-    END IF;
-END $$;
+ALTER TABLE ingestion_jobs
+    DROP CONSTRAINT IF EXISTS fk_ingestion_jobs_document_company;
+ALTER TABLE ingestion_jobs
+    ADD CONSTRAINT fk_ingestion_jobs_document_company
+    FOREIGN KEY (document_id, company_id)
+    REFERENCES documents(id, company_id)
+    ON DELETE CASCADE;
 
 DROP TRIGGER IF EXISTS update_ingestion_jobs_updated_at ON ingestion_jobs;
 CREATE TRIGGER update_ingestion_jobs_updated_at
@@ -284,20 +350,13 @@ CREATE INDEX IF NOT EXISTS idx_conversations_company_user_updated
     ON conversations(company_id, user_id, updated_at DESC)
     WHERE archived_at IS NULL;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'fk_conversations_user_company'
-          AND conrelid = 'public.conversations'::regclass
-    ) THEN
-        ALTER TABLE conversations
-            ADD CONSTRAINT fk_conversations_user_company
-            FOREIGN KEY (user_id, company_id)
-            REFERENCES users(id, company_id)
-            ON DELETE CASCADE;
-    END IF;
-END $$;
+ALTER TABLE conversations
+    DROP CONSTRAINT IF EXISTS fk_conversations_user_company;
+ALTER TABLE conversations
+    ADD CONSTRAINT fk_conversations_user_company
+    FOREIGN KEY (user_id, company_id)
+    REFERENCES users(id, company_id)
+    ON DELETE CASCADE;
 
 DROP TRIGGER IF EXISTS update_conversations_updated_at ON conversations;
 CREATE TRIGGER update_conversations_updated_at
@@ -325,40 +384,25 @@ CREATE INDEX IF NOT EXISTS idx_messages_conversation_created
 CREATE INDEX IF NOT EXISTS idx_messages_company_created
     ON messages(company_id, created_at DESC);
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'fk_messages_user_company'
-          AND conrelid = 'public.messages'::regclass
-    ) THEN
-        ALTER TABLE messages
-            ADD CONSTRAINT fk_messages_user_company
-            FOREIGN KEY (user_id, company_id)
-            REFERENCES users(id, company_id)
-            ON DELETE SET NULL (user_id);
-    END IF;
-END $$;
+ALTER TABLE messages
+    DROP CONSTRAINT IF EXISTS fk_messages_user_company;
+ALTER TABLE messages
+    ADD CONSTRAINT fk_messages_user_company
+    FOREIGN KEY (user_id, company_id)
+    REFERENCES users(id, company_id)
+    ON DELETE SET NULL (user_id);
 
 -- Enforce that a message and its conversation belong to the same company.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_conversations_id_company
     ON conversations(id, company_id);
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'fk_messages_conversation_company'
-          AND conrelid = 'public.messages'::regclass
-    ) THEN
-        ALTER TABLE messages
-            ADD CONSTRAINT fk_messages_conversation_company
-            FOREIGN KEY (conversation_id, company_id)
-            REFERENCES conversations(id, company_id)
-            ON DELETE CASCADE;
-    END IF;
-END $$;
+ALTER TABLE messages
+    DROP CONSTRAINT IF EXISTS fk_messages_conversation_company;
+ALTER TABLE messages
+    ADD CONSTRAINT fk_messages_conversation_company
+    FOREIGN KEY (conversation_id, company_id)
+    REFERENCES conversations(id, company_id)
+    ON DELETE CASCADE;
 
 -- ============================================================================
 -- 7. AUDIT EVENTS
@@ -380,20 +424,13 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_company_created
 CREATE INDEX IF NOT EXISTS idx_audit_events_resource
     ON audit_events(company_id, resource_type, resource_id, created_at DESC);
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'fk_audit_events_actor_company'
-          AND conrelid = 'public.audit_events'::regclass
-    ) THEN
-        ALTER TABLE audit_events
-            ADD CONSTRAINT fk_audit_events_actor_company
-            FOREIGN KEY (actor_user_id, company_id)
-            REFERENCES users(id, company_id)
-            ON DELETE SET NULL (actor_user_id);
-    END IF;
-END $$;
+ALTER TABLE audit_events
+    DROP CONSTRAINT IF EXISTS fk_audit_events_actor_company;
+ALTER TABLE audit_events
+    ADD CONSTRAINT fk_audit_events_actor_company
+    FOREIGN KEY (actor_user_id, company_id)
+    REFERENCES users(id, company_id)
+    ON DELETE SET NULL (actor_user_id);
 
 -- ============================================================================
 -- 8. TENANT CONSISTENCY FOR EXISTING RELATIONSHIPS
@@ -401,75 +438,40 @@ END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_query_logs_id_company
     ON query_logs(id, company_id);
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'fk_invitations_inviter_company'
-          AND conrelid = 'public.invitations'::regclass
-    ) THEN
-        ALTER TABLE invitations
-            ADD CONSTRAINT fk_invitations_inviter_company
-            FOREIGN KEY (invited_by, company_id)
-            REFERENCES users(id, company_id);
-    END IF;
-END $$;
+ALTER TABLE invitations
+    DROP CONSTRAINT IF EXISTS fk_invitations_inviter_company;
+ALTER TABLE invitations
+    ADD CONSTRAINT fk_invitations_inviter_company
+    FOREIGN KEY (invited_by, company_id)
+    REFERENCES users(id, company_id);
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'fk_query_logs_user_company'
-          AND conrelid = 'public.query_logs'::regclass
-    ) THEN
-        ALTER TABLE query_logs
-            ADD CONSTRAINT fk_query_logs_user_company
-            FOREIGN KEY (user_id, company_id)
-            REFERENCES users(id, company_id);
-    END IF;
-END $$;
+ALTER TABLE query_logs
+    DROP CONSTRAINT IF EXISTS fk_query_logs_user_company;
+ALTER TABLE query_logs
+    ADD CONSTRAINT fk_query_logs_user_company
+    FOREIGN KEY (user_id, company_id)
+    REFERENCES users(id, company_id);
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'fk_hr_escalations_query_company'
-          AND conrelid = 'public.hr_escalations'::regclass
-    ) THEN
-        ALTER TABLE hr_escalations
-            ADD CONSTRAINT fk_hr_escalations_query_company
-            FOREIGN KEY (query_log_id, company_id)
-            REFERENCES query_logs(id, company_id);
-    END IF;
-END $$;
+ALTER TABLE hr_escalations
+    DROP CONSTRAINT IF EXISTS fk_hr_escalations_query_company;
+ALTER TABLE hr_escalations
+    ADD CONSTRAINT fk_hr_escalations_query_company
+    FOREIGN KEY (query_log_id, company_id)
+    REFERENCES query_logs(id, company_id);
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'fk_hr_escalations_user_company'
-          AND conrelid = 'public.hr_escalations'::regclass
-    ) THEN
-        ALTER TABLE hr_escalations
-            ADD CONSTRAINT fk_hr_escalations_user_company
-            FOREIGN KEY (user_id, company_id)
-            REFERENCES users(id, company_id);
-    END IF;
-END $$;
+ALTER TABLE hr_escalations
+    DROP CONSTRAINT IF EXISTS fk_hr_escalations_user_company;
+ALTER TABLE hr_escalations
+    ADD CONSTRAINT fk_hr_escalations_user_company
+    FOREIGN KEY (user_id, company_id)
+    REFERENCES users(id, company_id);
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'fk_hr_escalations_resolver_company'
-          AND conrelid = 'public.hr_escalations'::regclass
-    ) THEN
-        ALTER TABLE hr_escalations
-            ADD CONSTRAINT fk_hr_escalations_resolver_company
-            FOREIGN KEY (resolved_by, company_id)
-            REFERENCES users(id, company_id);
-    END IF;
-END $$;
+ALTER TABLE hr_escalations
+    DROP CONSTRAINT IF EXISTS fk_hr_escalations_resolver_company;
+ALTER TABLE hr_escalations
+    ADD CONSTRAINT fk_hr_escalations_resolver_company
+    FOREIGN KEY (resolved_by, company_id)
+    REFERENCES users(id, company_id);
 
 -- ============================================================================
 -- 9. CONSTRAINTS AND INDEXES FOR EXISTING TABLES
