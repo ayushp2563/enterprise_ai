@@ -176,7 +176,10 @@ app/
 
 ## 4. Database schema
 
-The final column definitions and indexes belong to Phase 2. This conceptual schema establishes ownership and relationships.
+This conceptual schema establishes ownership and relationships. The physical,
+backward-compatible implementation is documented in `docs/DATABASE.md`: existing
+tables retain integer internal keys and gain UUID public identifiers, while new
+aggregate tables use UUID primary keys.
 
 ```mermaid
 erDiagram
@@ -306,7 +309,7 @@ erDiagram
 ### Important modeling decisions
 
 - **Organizations and memberships are separate:** A user identity can belong to more than one organization without duplicate email ambiguity. Role belongs to the membership, not the user.
-- **UUID public identifiers:** Tenant-owned resources use UUIDs to avoid exposing predictable global sequences. UUIDs do not replace authorization checks.
+- **UUID public identifiers:** Existing records gain UUIDs for API exposure without a risky primary-key rewrite; new aggregate roots use UUID primary keys. UUIDs do not replace authorization checks.
 - **Organization ID on every tenant-owned table:** Even where ownership can be derived through a join, the explicit key makes policies, indexes, and defensive checks simpler.
 - **Chunks retain source location:** Page number, chunk index, and metadata support reproducible citations.
 - **Embedding model is recorded:** A model change can trigger controlled re-embedding instead of silently mixing incompatible vectors.
