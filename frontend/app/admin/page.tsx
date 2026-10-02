@@ -13,7 +13,7 @@ export default function AdminPage() {
   const { data: categories = [] } = useCategories();
 
   return (
-    <ProtectedRoute allowedRoles={['company_admin']}>
+    <ProtectedRoute allowedRoles={['owner', 'admin']}>
       <div className="flex flex-col h-screen">
         <DashboardHeader />
         

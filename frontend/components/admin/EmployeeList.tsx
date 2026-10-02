@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useUsers, useDeactivateUser } from '@/lib/hooks/useUsers';
+import { useAuth } from '@/lib/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -29,6 +30,7 @@ import { Users, Loader2, UserX, CheckCircle2, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
 
 export function EmployeeList() {
+  const { user: currentUser } = useAuth();
   const { data: users, isLoading } = useUsers();
   const { mutate: deactivateUser, isPending: isDeactivating } = useDeactivateUser();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -51,11 +53,11 @@ export function EmployeeList() {
 
   const getRoleBadge = (role: string) => {
     const variants: Record<string, { variant: any; label: string }> = {
-      company_admin: { variant: 'default', label: 'Admin' },
-      hr_manager: { variant: 'secondary', label: 'HR Manager' },
-      employee: { variant: 'outline', label: 'Employee' },
+      owner: { variant: 'default', label: 'Owner' },
+      admin: { variant: 'secondary', label: 'Admin' },
+      member: { variant: 'outline', label: 'Member' },
     };
-    const config = variants[role] || variants.employee;
+    const config = variants[role] || variants.member;
     return <Badge variant={config.variant}>{config.label}</Badge>;
   };
 
@@ -117,7 +119,9 @@ export function EmployeeList() {
                       {format(new Date(user.created_at), 'MMM d, yyyy')}
                     </TableCell>
                     <TableCell className="text-right">
-                      {user.is_active && user.role !== 'company_admin' && (
+                      {currentUser?.role === 'owner' &&
+                        user.is_active &&
+                        user.role !== 'owner' && (
                         <Button
                           variant="ghost"
                           size="sm"

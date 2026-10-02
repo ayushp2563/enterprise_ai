@@ -1,7 +1,9 @@
 import logging
+import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
+from uuid import UUID, uuid4
 import psycopg2
 from passlib.context import CryptContext
 from jose import JWTError, jwt
@@ -10,15 +12,6 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# # Password hashing context
-# pwd_context = CryptContext(
-#     schemes=["bcrypt"],
-#     deprecated="auto",
-#     bcrypt__ident="2b",
-#     bcrypt__truncate_error=False  # Allow automatic truncation for passwords > 72 bytes
-# )
-
-# Line 14 in auth_service.py
 pwd_context = CryptContext(
     schemes=["argon2"],
     deprecated="auto",
@@ -52,24 +45,13 @@ class AuthService:
     # ========================================================================
     
     def hash_password(self, password: str) -> str:
-        """Hash a password using bcrypt."""
-        # Bcrypt has a 72-byte limit - truncate password if necessary
-        # This prevents passlib from raising an error
-        password_bytes = password.encode('utf-8')
-        if len(password_bytes) > 72:
-            password_bytes = password_bytes[:72]
-        safe_password = password_bytes.decode('utf-8', errors='ignore')
-        return pwd_context.hash(safe_password)
+        """Hash the complete password using Argon2."""
+        return pwd_context.hash(password)
     
     @staticmethod
     def verify_password(plain_password: str, hashed_password: str) -> bool:
         """Verify a password against its hash."""
-        # Truncate password to match hashing behavior
-        password_bytes = plain_password.encode('utf-8')
-        if len(password_bytes) > 72:
-            password_bytes = password_bytes[:72]
-        safe_password = password_bytes.decode('utf-8', errors='ignore')
-        return pwd_context.verify(safe_password, hashed_password)
+        return pwd_context.verify(plain_password, hashed_password)
     
     # ========================================================================
     # JWT Token Management
@@ -78,32 +60,38 @@ class AuthService:
     @staticmethod
     def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
         """Create a JWT access token."""
+        now = datetime.now(timezone.utc)
         to_encode = data.copy()
-        if expires_delta:
-            expire = datetime.utcnow() + expires_delta
-        else:
-            expire = datetime.utcnow() + timedelta(minutes=15)
-        to_encode.update({"exp": expire, "type": "access"})
-        encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
-        return encoded_jwt
-    
-    @staticmethod
-    def create_refresh_token(data: dict) -> str:
-        """Create a JWT refresh token."""
-        to_encode = data.copy()
-        expire = datetime.utcnow() + timedelta(days=7)
-        to_encode.update({"exp": expire, "type": "refresh"})
+        expire = now + (
+            expires_delta
+            or timedelta(minutes=settings.access_token_expire_minutes)
+        )
+        to_encode.update({
+            "aud": settings.jwt_audience,
+            "exp": expire,
+            "iat": now,
+            "iss": settings.jwt_issuer,
+            "jti": str(uuid4()),
+            "nbf": now,
+            "type": "access",
+        })
         encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
         return encoded_jwt
     
     @staticmethod
     def decode_token(token: str) -> Optional[dict]:
-        """Decode and validate a JWT token."""
+        """Decode and validate an access token."""
         try:
-            payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+            payload = jwt.decode(
+                token,
+                settings.secret_key,
+                algorithms=[settings.algorithm],
+                audience=settings.jwt_audience,
+                issuer=settings.jwt_issuer,
+            )
             return payload
-        except JWTError as e:
-            logger.error(f"JWT decode error: {str(e)}")
+        except JWTError:
+            logger.info("Access token validation failed")
             return None
     
     # ========================================================================
@@ -135,7 +123,8 @@ class AuthService:
                     raise ValueError(f"Company with slug '{slug}' already exists")
                 
                 # Check if email already exists
-                cursor.execute("SELECT id FROM users WHERE email = %s", (admin_email,))
+                normalized_email = admin_email.strip().lower()
+                cursor.execute("SELECT id FROM users WHERE email = %s", (normalized_email,))
                 if cursor.fetchone():
                     raise ValueError(f"User with email '{admin_email}' already exists")
                 
@@ -167,17 +156,27 @@ class AuthService:
                 cursor.execute("""
                     INSERT INTO users (company_id, email, password_hash, full_name, role, is_active)
                     VALUES (%s, %s, %s, %s, 'company_admin', true)
-                    RETURNING id, company_id, email, full_name, role, is_active, 
-                              last_login, created_at, updated_at
-                """, (company["id"], admin_email, password_hash, admin_full_name))
+                    RETURNING id, public_id, company_id, email, full_name,
+                              is_active, last_login, created_at, updated_at
+                """, (company["id"], normalized_email, password_hash, admin_full_name))
                 
                 user_row = cursor.fetchone()
+
+                cursor.execute("""
+                    INSERT INTO memberships (company_id, user_id, role, is_active)
+                    VALUES (%s, %s, 'owner', true)
+                    RETURNING id
+                """, (company["id"], user_row[0]))
+                membership_id = cursor.fetchone()[0]
+
                 user = {
                     "id": user_row[0],
-                    "company_id": user_row[1],
-                    "email": user_row[2],
-                    "full_name": user_row[3],
-                    "role": user_row[4],
+                    "public_id": user_row[1],
+                    "company_id": user_row[2],
+                    "email": user_row[3],
+                    "full_name": user_row[4],
+                    "membership_id": membership_id,
+                    "role": "owner",
                     "is_active": user_row[5],
                     "last_login": user_row[6],
                     "created_at": user_row[7],
@@ -185,7 +184,7 @@ class AuthService:
                 }
                 
                 self.connection.commit()
-                logger.info(f"Created company '{name}' with admin user '{admin_email}'")
+                logger.info("Created organization and owner account")
                 
                 return company, user
                 
@@ -233,7 +232,12 @@ class AuthService:
     # User Authentication
     # ========================================================================
     
-    def authenticate_user(self, email: str, password: str) -> Optional[dict]:
+    def authenticate_user(
+        self,
+        email: str,
+        password: str,
+        organization_slug: Optional[str] = None,
+    ) -> Optional[dict]:
         """
         Authenticate a user by email and password.
         
@@ -245,69 +249,86 @@ class AuthService:
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute("""
-                    SELECT id, company_id, email, password_hash, full_name, role, 
-                           is_active, last_login, created_at, updated_at
+                    SELECT id, password_hash, is_active
                     FROM users
                     WHERE email = %s
-                """, (email,))
+                """, (email.strip().lower(),))
                 
                 row = cursor.fetchone()
                 if not row:
-                    logger.warning(f"Authentication failed: User '{email}' not found")
                     return None
-                
-                user = {
-                    "id": row[0],
-                    "company_id": row[1],
-                    "email": row[2],
-                    "password_hash": row[3],
-                    "full_name": row[4],
-                    "role": row[5],
-                    "is_active": row[6],
-                    "last_login": row[7],
-                    "created_at": row[8],
-                    "updated_at": row[9]
-                }
-                
-                # Check if user is active
-                if not user["is_active"]:
-                    logger.warning(f"Authentication failed: User '{email}' is inactive")
+
+                user_id, password_hash, is_active = row
+                if not is_active:
                     return None
-                
-                # Verify password
-                if not self.verify_password(password, user["password_hash"]):
-                    logger.warning(f"Authentication failed: Invalid password for '{email}'")
+
+                if not self.verify_password(password, password_hash):
                     return None
-                
-                # Update last login
+
+                params = [user_id]
+                organization_filter = ""
+                if organization_slug:
+                    organization_filter = "AND c.slug = %s"
+                    params.append(organization_slug)
+
                 cursor.execute("""
-                    UPDATE users SET last_login = NOW() WHERE id = %s
-                """, (user["id"],))
+                    SELECT m.id
+                    FROM memberships AS m
+                    JOIN companies AS c ON c.id = m.company_id
+                    WHERE m.user_id = %s
+                      AND m.is_active = true
+                      AND c.is_active = true
+                    {organization_filter}
+                    ORDER BY m.created_at
+                """.format(organization_filter=organization_filter), params)
+                memberships = cursor.fetchall()
+
+                if not memberships:
+                    return None
+                if len(memberships) > 1 and not organization_slug:
+                    raise ValueError(
+                        "organization_slug is required for accounts with multiple memberships"
+                    )
+
+                user = self.get_principal(user_id, memberships[0][0])
+                if not user:
+                    return None
+
+                cursor.execute(
+                    "UPDATE users SET last_login = NOW() WHERE id = %s",
+                    (user_id,)
+                )
                 self.connection.commit()
-                
-                # Remove password hash from returned user
-                del user["password_hash"]
-                user["last_login"] = datetime.utcnow()
-                
-                logger.info(f"User '{email}' authenticated successfully")
+                user["last_login"] = datetime.now(timezone.utc)
+
+                logger.info("User authenticated successfully")
                 return user
                 
         except Exception as e:
             logger.error(f"Error authenticating user: {str(e)}")
             raise
     
-    def get_user_by_id(self, user_id: int) -> Optional[dict]:
-        """Get user by ID."""
+    def get_principal(self, user_id: int, membership_id: UUID | str) -> Optional[dict]:
+        """Load the current user and authoritative active membership."""
         self._ensure_connection()
         
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute("""
-                    SELECT id, company_id, email, full_name, role, is_active, 
-                           last_login, created_at, updated_at
-                    FROM users
-                    WHERE id = %s
-                """, (user_id,))
+                    SELECT
+                        u.id, u.public_id, u.email, u.full_name, u.is_active,
+                        u.last_login, u.created_at, u.updated_at,
+                        m.id, m.company_id, m.role,
+                        c.public_id, c.slug
+                    FROM users AS u
+                    JOIN memberships AS m ON m.user_id = u.id
+                    JOIN companies AS c ON c.id = m.company_id
+                    WHERE u.id = %s
+                      AND m.id = %s
+                      AND u.is_active = true
+                      AND m.is_active = true
+                      AND c.is_active = true
+                """, (user_id, str(membership_id)))
                 
                 row = cursor.fetchone()
                 if not row:
@@ -315,18 +336,143 @@ class AuthService:
                 
                 return {
                     "id": row[0],
-                    "company_id": row[1],
+                    "public_id": row[1],
                     "email": row[2],
                     "full_name": row[3],
-                    "role": row[4],
-                    "is_active": row[5],
-                    "last_login": row[6],
-                    "created_at": row[7],
-                    "updated_at": row[8]
+                    "is_active": row[4],
+                    "last_login": row[5],
+                    "created_at": row[6],
+                    "updated_at": row[7],
+                    "membership_id": row[8],
+                    "company_id": row[9],
+                    "role": row[10],
+                    "company_public_id": row[11],
+                    "organization_slug": row[12],
                 }
                 
         except Exception as e:
             logger.error(f"Error getting user: {str(e)}")
+            raise
+
+    def get_user_by_id(
+        self,
+        user_id: int,
+        membership_id: UUID | str,
+    ) -> Optional[dict]:
+        """Compatibility wrapper for principal loading."""
+        return self.get_principal(user_id, membership_id)
+
+    @staticmethod
+    def _hash_secret(secret: str) -> str:
+        return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+    def create_refresh_session(self, user_id: int, membership_id: UUID | str) -> str:
+        """Create an opaque, server-revocable refresh session."""
+        self._ensure_connection()
+        raw_token = secrets.token_urlsafe(48)
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            days=settings.refresh_token_expire_days
+        )
+
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO refresh_sessions (
+                        user_id, membership_id, token_hash, expires_at
+                    )
+                    VALUES (%s, %s, %s, %s)
+                """, (
+                    user_id,
+                    str(membership_id),
+                    self._hash_secret(raw_token),
+                    expires_at,
+                ))
+            self.connection.commit()
+            return raw_token
+        except Exception:
+            self.connection.rollback()
+            raise
+
+    def rotate_refresh_session(self, refresh_token: str) -> Tuple[dict, str]:
+        """Consume one refresh token and atomically issue its replacement."""
+        self._ensure_connection()
+        replacement_token = secrets.token_urlsafe(48)
+        replacement_id = uuid4()
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            days=settings.refresh_token_expire_days
+        )
+
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT user_id, membership_id
+                    FROM refresh_sessions
+                    WHERE token_hash = %s
+                      AND revoked_at IS NULL
+                      AND expires_at > NOW()
+                    FOR UPDATE
+                """, (self._hash_secret(refresh_token),))
+                row = cursor.fetchone()
+                if not row:
+                    raise ValueError("Invalid or expired refresh token")
+
+                user_id, membership_id = row
+                principal = self.get_principal(user_id, membership_id)
+                if not principal:
+                    raise ValueError("Membership is no longer active")
+
+                cursor.execute("""
+                    INSERT INTO refresh_sessions (
+                        id, user_id, membership_id, token_hash, expires_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (
+                    str(replacement_id),
+                    user_id,
+                    str(membership_id),
+                    self._hash_secret(replacement_token),
+                    expires_at,
+                ))
+                cursor.execute("""
+                    UPDATE refresh_sessions
+                    SET revoked_at = NOW(),
+                        last_used_at = NOW(),
+                        replaced_by = %s
+                    WHERE token_hash = %s
+                """, (
+                    str(replacement_id),
+                    self._hash_secret(refresh_token),
+                ))
+            self.connection.commit()
+            return principal, replacement_token
+        except Exception:
+            self.connection.rollback()
+            raise
+
+    def revoke_refresh_session(
+        self,
+        refresh_token: str,
+        user_id: int,
+        membership_id: UUID | str,
+    ) -> None:
+        """Idempotently revoke a refresh session."""
+        self._ensure_connection()
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE refresh_sessions
+                    SET revoked_at = COALESCE(revoked_at, NOW())
+                    WHERE token_hash = %s
+                      AND user_id = %s
+                      AND membership_id = %s
+                """, (
+                    self._hash_secret(refresh_token),
+                    user_id,
+                    str(membership_id),
+                ))
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
             raise
     
     # ========================================================================
@@ -345,32 +491,49 @@ class AuthService:
         
         try:
             with self.connection.cursor() as cursor:
-                # Check if user already exists
+                normalized_email = email.strip().lower()
+
+                # Existing identities may join another organization, but an
+                # existing membership must not be duplicated.
                 cursor.execute("""
-                    SELECT id FROM users WHERE company_id = %s AND email = %s
-                """, (company_id, email))
+                    SELECT 1
+                    FROM users AS u
+                    JOIN memberships AS m ON m.user_id = u.id
+                    WHERE m.company_id = %s
+                      AND u.email = %s
+                      AND m.is_active = true
+                """, (company_id, normalized_email))
                 if cursor.fetchone():
                     raise ValueError(f"User with email '{email}' already exists in this company")
-                
-                # Check if invitation already exists
-                cursor.execute("""
-                    SELECT id FROM invitations 
-                    WHERE company_id = %s AND email = %s AND accepted_at IS NULL
-                """, (company_id, email))
-                if cursor.fetchone():
-                    raise ValueError(f"Pending invitation for '{email}' already exists")
-                
-                # Generate token
+
                 token = secrets.token_urlsafe(32)
-                expires_at = datetime.utcnow() + timedelta(days=7)
+                token_hash = self._hash_secret(token)
+                expires_at = datetime.now(timezone.utc) + timedelta(days=7)
                 
-                # Create invitation
                 cursor.execute("""
-                    INSERT INTO invitations (company_id, email, role, token, invited_by, expires_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    RETURNING id, company_id, email, role, token, invited_by, expires_at, 
-                              accepted_at, created_at
-                """, (company_id, email, role, token, invited_by, expires_at))
+                    INSERT INTO invitations (
+                        company_id, email, role, token, token_hash,
+                        invited_by, expires_at, accepted_at
+                    )
+                    VALUES (%s, %s, %s, NULL, %s, %s, %s, NULL)
+                    ON CONFLICT (company_id, email) DO UPDATE
+                    SET role = EXCLUDED.role,
+                        token = NULL,
+                        token_hash = EXCLUDED.token_hash,
+                        invited_by = EXCLUDED.invited_by,
+                        expires_at = EXCLUDED.expires_at,
+                        accepted_at = NULL,
+                        created_at = NOW()
+                    RETURNING id, company_id, email, role, invited_by,
+                              expires_at, accepted_at, created_at
+                """, (
+                    company_id,
+                    normalized_email,
+                    role,
+                    token_hash,
+                    invited_by,
+                    expires_at,
+                ))
                 
                 row = cursor.fetchone()
                 invitation = {
@@ -378,15 +541,15 @@ class AuthService:
                     "company_id": row[1],
                     "email": row[2],
                     "role": row[3],
-                    "token": row[4],
-                    "invited_by": row[5],
-                    "expires_at": row[6],
-                    "accepted_at": row[7],
-                    "created_at": row[8]
+                    "invited_by": row[4],
+                    "expires_at": row[5],
+                    "accepted_at": row[6],
+                    "created_at": row[7],
+                    "invitation_token": token,
                 }
                 
                 self.connection.commit()
-                logger.info(f"Created invitation for '{email}' to company {company_id}")
+                logger.info("Created organization invitation")
                 
                 return invitation
                 
@@ -415,8 +578,9 @@ class AuthService:
                 cursor.execute("""
                     SELECT id, company_id, email, role, expires_at, accepted_at
                     FROM invitations
-                    WHERE token = %s
-                """, (token,))
+                    WHERE token_hash = %s
+                    FOR UPDATE
+                """, (self._hash_secret(token),))
                 
                 row = cursor.fetchone()
                 if not row:
@@ -436,42 +600,69 @@ class AuthService:
                     raise ValueError("Invitation has already been accepted")
                 
                 # Check if expired
-                if invitation["expires_at"] < datetime.utcnow():
+                if invitation["expires_at"] < datetime.now(timezone.utc):
                     raise ValueError("Invitation has expired")
-                
-                # Create user
-                password_hash = self.hash_password(password)
+
                 cursor.execute("""
-                    INSERT INTO users (company_id, email, password_hash, full_name, role, is_active)
-                    VALUES (%s, %s, %s, %s, %s, true)
-                    RETURNING id, company_id, email, full_name, role, is_active, 
-                              last_login, created_at, updated_at
-                """, (invitation["company_id"], invitation["email"], password_hash, 
-                      full_name, invitation["role"]))
-                
-                user_row = cursor.fetchone()
-                user = {
-                    "id": user_row[0],
-                    "company_id": user_row[1],
-                    "email": user_row[2],
-                    "full_name": user_row[3],
-                    "role": user_row[4],
-                    "is_active": user_row[5],
-                    "last_login": user_row[6],
-                    "created_at": user_row[7],
-                    "updated_at": user_row[8]
-                }
+                    SELECT id, password_hash, is_active
+                    FROM users
+                    WHERE email = %s
+                """, (invitation["email"],))
+                existing_user = cursor.fetchone()
+
+                if existing_user:
+                    user_id, existing_hash, is_active = existing_user
+                    if not is_active or not self.verify_password(password, existing_hash):
+                        raise ValueError("Invalid account credentials")
+                else:
+                    password_hash = self.hash_password(password)
+                    legacy_role = {
+                        "owner": "company_admin",
+                        "admin": "hr_manager",
+                        "member": "employee",
+                    }[invitation["role"]]
+                    cursor.execute("""
+                        INSERT INTO users (
+                            company_id, email, password_hash, full_name,
+                            role, is_active
+                        )
+                        VALUES (%s, %s, %s, %s, %s, true)
+                        RETURNING id
+                    """, (
+                        invitation["company_id"],
+                        invitation["email"],
+                        password_hash,
+                        full_name,
+                        legacy_role,
+                    ))
+                    user_id = cursor.fetchone()[0]
+
+                cursor.execute("""
+                    INSERT INTO memberships (company_id, user_id, role, is_active)
+                    VALUES (%s, %s, %s, true)
+                    ON CONFLICT (company_id, user_id) DO UPDATE
+                    SET role = EXCLUDED.role,
+                        is_active = true,
+                        updated_at = NOW()
+                    RETURNING id
+                """, (
+                    invitation["company_id"],
+                    user_id,
+                    invitation["role"],
+                ))
+                membership_id = cursor.fetchone()[0]
                 
                 # Mark invitation as accepted
                 cursor.execute("""
-                    UPDATE invitations SET accepted_at = NOW() WHERE id = %s
+                    UPDATE invitations
+                    SET accepted_at = NOW(), token_hash = NULL
+                    WHERE id = %s
                 """, (invitation["id"],))
-                
-                # Get company
+
+                user = self.get_principal(user_id, membership_id)
                 company = self.get_company_by_id(invitation["company_id"])
-                
                 self.connection.commit()
-                logger.info(f"User '{invitation['email']}' accepted invitation and created account")
+                logger.info("Organization invitation accepted")
                 
                 return user, company
                 

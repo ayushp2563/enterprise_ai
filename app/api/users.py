@@ -3,11 +3,11 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from app.models.auth import (
     UserResponse, UserUpdate,
-    InvitationCreate, InvitationResponse
+    InvitationCreate, InvitationResponse, InvitationCreatedResponse
 )
 from app.services.user_service import get_user_service, UserService
 from app.services.auth_service import get_auth_service, AuthService
-from app.security.auth import get_current_user, require_admin, require_hr_or_admin
+from app.security.auth import require_admin, require_owner
 
 logger = logging.getLogger(__name__)
 
@@ -18,13 +18,13 @@ router = APIRouter(prefix="/api/users", tags=["Users"])
 async def list_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    current_user: dict = Depends(require_hr_or_admin),
+    current_user: dict = Depends(require_admin),
     user_service: UserService = Depends(get_user_service)
 ):
     """
     List all users in the company.
     
-    Requires: HR Manager or Admin role
+    Requires: Owner or Admin role
     """
     try:
         users = user_service.get_users_by_company(
@@ -42,16 +42,16 @@ async def list_users(
         )
 
 
-@router.get("/{user_id}", response_model=UserResponse)
+@router.get("/{user_id:int}", response_model=UserResponse)
 async def get_user(
     user_id: int,
-    current_user: dict = Depends(require_hr_or_admin),
+    current_user: dict = Depends(require_admin),
     user_service: UserService = Depends(get_user_service)
 ):
     """
     Get user details by ID.
     
-    Requires: HR Manager or Admin role
+    Requires: Owner or Admin role
     """
     try:
         user = user_service.get_user_by_id(
@@ -77,19 +77,25 @@ async def get_user(
         )
 
 
-@router.put("/{user_id}", response_model=UserResponse)
+@router.put("/{user_id:int}", response_model=UserResponse)
 async def update_user(
     user_id: int,
     user_update: UserUpdate,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(require_owner),
     user_service: UserService = Depends(get_user_service)
 ):
     """
     Update user details.
     
-    Requires: Admin role
+    Requires: Owner role
     """
     try:
+        if user_update.full_name is not None and user_id != current_user["id"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Users manage their own profile name",
+            )
+
         user = user_service.update_user(
             user_id=user_id,
             company_id=current_user["company_id"],
@@ -104,11 +110,19 @@ async def update_user(
                 detail="User not found"
             )
         
-        logger.info(f"User {user_id} updated by {current_user['email']}")
+        logger.info(
+            "Membership updated",
+            extra={"company_id": current_user["company_id"], "user_id": user_id},
+        )
         return UserResponse(**user)
         
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        )
     except Exception as e:
         logger.error(f"Error updating user: {str(e)}")
         raise HTTPException(
@@ -117,16 +131,16 @@ async def update_user(
         )
 
 
-@router.delete("/{user_id}")
+@router.delete("/{user_id:int}")
 async def deactivate_user(
     user_id: int,
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(require_owner),
     user_service: UserService = Depends(get_user_service)
 ):
     """
     Deactivate a user (soft delete).
     
-    Requires: Admin role
+    Requires: Owner role
     """
     try:
         # Prevent self-deactivation
@@ -147,11 +161,19 @@ async def deactivate_user(
                 detail="User not found"
             )
         
-        logger.info(f"User {user_id} deactivated by {current_user['email']}")
+        logger.info(
+            "Membership deactivated",
+            extra={"company_id": current_user["company_id"], "user_id": user_id},
+        )
         return {"message": "User deactivated successfully"}
         
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        )
     except Exception as e:
         logger.error(f"Error deactivating user: {str(e)}")
         raise HTTPException(
@@ -160,18 +182,28 @@ async def deactivate_user(
         )
 
 
-@router.post("/invite", response_model=InvitationResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/invite",
+    response_model=InvitationCreatedResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def invite_user(
     invitation: InvitationCreate,
-    current_user: dict = Depends(require_hr_or_admin),
+    current_user: dict = Depends(require_admin),
     auth_service: AuthService = Depends(get_auth_service)
 ):
     """
     Invite a new user to the company.
     
-    Requires: HR Manager or Admin role
+    Requires: Owner or Admin role
     """
     try:
+        if current_user["role"] == "admin" and invitation.role != "member":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admins may only invite members",
+            )
+
         invitation_data = auth_service.create_invitation(
             company_id=current_user["company_id"],
             email=invitation.email,
@@ -179,13 +211,15 @@ async def invite_user(
             invited_by=current_user["id"]
         )
         
-        logger.info(f"Invitation sent to {invitation.email} by {current_user['email']}")
+        logger.info(
+            "Invitation created",
+            extra={"company_id": current_user["company_id"]},
+        )
         
-        # In production, send email here with invitation link
-        # Example: send_invitation_email(invitation.email, invitation_data["token"])
+        return InvitationCreatedResponse(**invitation_data)
         
-        return InvitationResponse(**invitation_data)
-        
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -201,13 +235,13 @@ async def invite_user(
 
 @router.get("/invitations/pending", response_model=List[InvitationResponse])
 async def list_pending_invitations(
-    current_user: dict = Depends(require_hr_or_admin),
+    current_user: dict = Depends(require_admin),
     user_service: UserService = Depends(get_user_service)
 ):
     """
     List all pending invitations for the company.
     
-    Requires: HR Manager or Admin role
+    Requires: Owner or Admin role
     """
     try:
         invitations = user_service.get_invitations_by_company(

@@ -44,6 +44,7 @@
 #     """Get cached settings instance."""
 #     return Settings()
 from functools import lru_cache
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,12 +64,14 @@ class Settings(BaseSettings):
     # API
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    api_key: str
 
     # Security
-    secret_key: str
+    secret_key: str = Field(min_length=32)
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
+    jwt_issuer: str = "enterprise-ai-platform"
+    jwt_audience: str = "enterprise-ai-platform-api"
 
     # RAG Configuration
     embedding_model: str = "all-MiniLM-L6-v2"

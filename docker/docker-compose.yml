@@ -7,19 +7,37 @@ services:
     container_name: enterprise_ai_db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured}
       POSTGRES_DB: ${POSTGRES_DB:-enterprise_ai}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER}" ]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - enterprise_ai_network
+
+  # One-shot schema migration for local development. Hosted deployments should
+  # run the same command as an explicit release step.
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured}@db:5432/${POSTGRES_DB:-enterprise_ai}
+    command: [ "python", "scripts/init_db.py" ]
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ../scripts:/app/scripts
+    networks:
+      - enterprise_ai_network
+    restart: "no"
 
   # FastAPI application
   app:
@@ -31,13 +49,15 @@ services:
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - GROQ_API_KEY=${GROQ_API_KEY}
       - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-enterprise_ai}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured}@db:5432/${POSTGRES_DB:-enterprise_ai}
       - API_HOST=0.0.0.0
       - API_PORT=8000
-      - API_KEY=${API_KEY:-change_me_in_production}
-      - SECRET_KEY=${SECRET_KEY:-change_me_in_production}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be configured}
       - ALGORITHM=HS256
       - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - REFRESH_TOKEN_EXPIRE_DAYS=7
+      - JWT_ISSUER=enterprise-ai-platform
+      - JWT_AUDIENCE=enterprise-ai-platform-api
       - EMBEDDING_MODEL=all-MiniLM-L6-v2
       - CHUNK_SIZE=1000
       - CHUNK_OVERLAP=200
@@ -46,8 +66,8 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ../app:/app/app
       - ../scripts:/app/scripts
