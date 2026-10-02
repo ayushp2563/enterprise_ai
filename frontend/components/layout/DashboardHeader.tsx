@@ -30,8 +30,8 @@ export function DashboardHeader() {
         <div className="flex items-center gap-4">
           <h1 className="text-xl font-bold">Enterprise AI Assistant</h1>
           <p className="text-sm text-muted-foreground">
-            {user.role === 'company_admin' ? 'Admin Dashboard' : 
-             user.role === 'hr_manager' ? 'HR Dashboard' : 
+            {user.role === 'owner' ? 'Owner Dashboard' : 
+             user.role === 'admin' ? 'Admin Dashboard' : 
              'Employee Dashboard'}
           </p>
         </div>
@@ -40,7 +40,7 @@ export function DashboardHeader() {
           <Button variant="ghost" asChild>
             <a href="/qa">Ask Questions</a>
           </Button>
-          {user.role === 'company_admin' && (
+          {(user.role === 'owner' || user.role === 'admin') && (
             <Button variant="ghost" asChild>
               <a href="/admin">Admin</a>
             </Button>

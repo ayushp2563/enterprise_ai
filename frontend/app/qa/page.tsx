@@ -78,7 +78,7 @@ export default function QAPage() {
   };
 
   return (
-    <ProtectedRoute allowedRoles={['company_admin', 'hr_manager', 'employee']}>
+    <ProtectedRoute allowedRoles={['owner', 'admin', 'member']}>
       <div className="flex flex-col h-screen bg-background relative overflow-hidden">
         {/* Decorative background blobs for QA */}
         <div className="absolute top-[20%] right-[-5%] w-[30%] h-[30%] rounded-full bg-primary/10 blur-[100px] pointer-events-none" />

@@ -9,6 +9,7 @@ This document describes the schema introduced through:
 - `scripts/init_db.py`
 - `scripts/migrations/001_add_multi_tenancy.sql`
 - `scripts/migrations/002_strengthen_core_schema.sql`
+- `scripts/migrations/003_secure_authentication.sql`
 
 Migration 002 is intentionally backward compatible with the current FastAPI application. The existing `companies` table remains the physical tenant table, and existing integer primary and foreign keys remain in place. Renaming functioning tables or replacing every key in one migration would add risk without improving tenant isolation.
 
@@ -19,7 +20,8 @@ Migration 002 is intentionally backward compatible with the current FastAPI appl
 - New aggregate and event tables use UUID primary keys.
 - UUIDs reduce identifier enumeration and make independently created records easier to merge, but they do not provide authorization. Every tenant resource still requires an ownership check.
 
-Phase 3 can move API paths to public UUIDs without rewriting internal foreign keys.
+A later API-contract phase can move routes to public UUIDs without rewriting
+internal foreign keys.
 
 ## Relationships
 
@@ -59,7 +61,8 @@ Subscription limit fields remain for compatibility but should not be presented a
 
 Users currently retain `company_id` and the legacy roles `company_admin`, `hr_manager`, and `employee`. Migration 002 adds a public UUID and validates legacy role values.
 
-This model remains temporarily because the current authentication code depends on it. Memberships become the authorization source of truth in Phase 3.
+These columns remain as a compatibility bridge. Authentication and
+authorization use memberships as the source of truth.
 
 ### `memberships`
 
@@ -79,7 +82,10 @@ Migration 002 backfills memberships:
 | `hr_manager` | `admin` |
 | `employee` | `member` |
 
-The composite user/company constraint is transitional. When Phase 3 supports one user belonging to multiple organizations, `users.company_id` and `users.role` can be retired and the constraint can be replaced by independent membership ownership.
+Migration 003 removes the transitional composite user/company constraint so one
+global user identity can belong to multiple organizations. The legacy
+`users.company_id` and `users.role` values are no longer authoritative and can
+be removed after all data consumers migrate.
 
 ### `documents`
 
@@ -169,6 +175,12 @@ Expected events include:
 
 Metadata must not contain passwords, tokens, complete prompts, or document bodies.
 
+### `refresh_sessions`
+
+Refresh sessions store hashes of opaque random tokens. Each session belongs to
+one user and membership, has an expiration, and records revocation and rotation.
+The raw refresh token is never stored.
+
 ## Tenant isolation
 
 The schema enforces tenant consistency through:
@@ -181,7 +193,10 @@ The schema enforces tenant consistency through:
 
 Application queries must still derive company identity from the authenticated membership and include it in every tenant-owned lookup.
 
-PostgreSQL row-level security is not enabled in Migration 002. Enabling RLS before requests establish transaction-local tenant context would either break the current API or create a false sense of safety. Phase 3 should introduce:
+PostgreSQL row-level security is not enabled yet. Enabling RLS before requests
+establish transaction-local tenant context would either break the current API
+or create a false sense of safety. A later tenant-isolation phase should
+introduce:
 
 1. transaction-scoped `app.current_company_id`
 2. policies using that setting
@@ -274,7 +289,8 @@ Production deployments should run migrations as an explicit release step before 
 
 ## Known transitional limitations
 
-- The current API still uses legacy user roles instead of memberships.
+- Legacy identity columns remain as a compatibility bridge, but the API no
+  longer uses them for authorization.
 - New ingestion jobs are not yet created or processed by application code.
 - Conversation and message APIs do not yet exist.
 - Public UUIDs are not yet used by API routes.

@@ -28,6 +28,28 @@ class UserService:
         """Ensure database connection is active."""
         if self.connection is None or self.connection.closed:
             self._connect()
+
+    @staticmethod
+    def _guard_last_owner(cursor, user_id: int, company_id: int) -> None:
+        """Prevent removal or demotion of the final active owner."""
+        cursor.execute("""
+            SELECT role, is_active
+            FROM memberships
+            WHERE user_id = %s AND company_id = %s
+        """, (user_id, company_id))
+        target = cursor.fetchone()
+        if not target or target[0] != "owner" or not target[1]:
+            return
+
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM memberships
+            WHERE company_id = %s
+              AND role = 'owner'
+              AND is_active = true
+        """, (company_id,))
+        if cursor.fetchone()[0] <= 1:
+            raise ValueError("The organization must retain at least one active owner")
     
     def get_users_by_company(self, company_id: int, skip: int = 0, limit: int = 100) -> List[dict]:
         """Get all users for a company."""
@@ -36,11 +58,14 @@ class UserService:
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute("""
-                    SELECT id, company_id, email, full_name, role, is_active, 
-                           last_login, created_at, updated_at
-                    FROM users
-                    WHERE company_id = %s
-                    ORDER BY created_at DESC
+                    SELECT
+                        u.id, u.public_id, m.company_id, u.email, u.full_name,
+                        m.id, m.role, (u.is_active AND m.is_active),
+                        u.last_login, u.created_at, u.updated_at
+                    FROM memberships AS m
+                    JOIN users AS u ON u.id = m.user_id
+                    WHERE m.company_id = %s
+                    ORDER BY m.created_at DESC
                     LIMIT %s OFFSET %s
                 """, (company_id, limit, skip))
                 
@@ -48,14 +73,16 @@ class UserService:
                 for row in cursor.fetchall():
                     users.append({
                         "id": row[0],
-                        "company_id": row[1],
-                        "email": row[2],
-                        "full_name": row[3],
-                        "role": row[4],
-                        "is_active": row[5],
-                        "last_login": row[6],
-                        "created_at": row[7],
-                        "updated_at": row[8]
+                        "public_id": row[1],
+                        "company_id": row[2],
+                        "email": row[3],
+                        "full_name": row[4],
+                        "membership_id": row[5],
+                        "role": row[6],
+                        "is_active": row[7],
+                        "last_login": row[8],
+                        "created_at": row[9],
+                        "updated_at": row[10]
                     })
                 
                 return users
@@ -71,10 +98,13 @@ class UserService:
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute("""
-                    SELECT id, company_id, email, full_name, role, is_active, 
-                           last_login, created_at, updated_at
-                    FROM users
-                    WHERE id = %s AND company_id = %s
+                    SELECT
+                        u.id, u.public_id, m.company_id, u.email, u.full_name,
+                        m.id, m.role, (u.is_active AND m.is_active),
+                        u.last_login, u.created_at, u.updated_at
+                    FROM memberships AS m
+                    JOIN users AS u ON u.id = m.user_id
+                    WHERE u.id = %s AND m.company_id = %s
                 """, (user_id, company_id))
                 
                 row = cursor.fetchone()
@@ -83,14 +113,16 @@ class UserService:
                 
                 return {
                     "id": row[0],
-                    "company_id": row[1],
-                    "email": row[2],
-                    "full_name": row[3],
-                    "role": row[4],
-                    "is_active": row[5],
-                    "last_login": row[6],
-                    "created_at": row[7],
-                    "updated_at": row[8]
+                    "public_id": row[1],
+                    "company_id": row[2],
+                    "email": row[3],
+                    "full_name": row[4],
+                    "membership_id": row[5],
+                    "role": row[6],
+                    "is_active": row[7],
+                    "last_login": row[8],
+                    "created_at": row[9],
+                    "updated_at": row[10]
                 }
                 
         except Exception as e:
@@ -110,58 +142,48 @@ class UserService:
         
         try:
             with self.connection.cursor() as cursor:
-                # Build dynamic update query
-                updates = []
-                params = []
-                
+                if (role is not None and role != "owner") or is_active is False:
+                    self._guard_last_owner(cursor, user_id, company_id)
+
                 if full_name is not None:
-                    updates.append("full_name = %s")
-                    params.append(full_name)
-                
+                    cursor.execute("""
+                        UPDATE users AS u
+                        SET full_name = %s
+                        FROM memberships AS m
+                        WHERE u.id = %s
+                          AND m.user_id = u.id
+                          AND m.company_id = %s
+                    """, (full_name, user_id, company_id))
+
+                membership_updates = []
+                membership_params = []
                 if role is not None:
-                    updates.append("role = %s")
-                    params.append(role)
-                
+                    membership_updates.append("role = %s")
+                    membership_params.append(role)
                 if is_active is not None:
-                    updates.append("is_active = %s")
-                    params.append(is_active)
-                
-                if not updates:
-                    # No updates to make
-                    return self.get_user_by_id(user_id, company_id)
-                
-                params.extend([user_id, company_id])
-                
-                query = f"""
-                    UPDATE users
-                    SET {', '.join(updates)}
-                    WHERE id = %s AND company_id = %s
-                    RETURNING id, company_id, email, full_name, role, is_active, 
-                              last_login, created_at, updated_at
-                """
-                
-                cursor.execute(query, params)
-                row = cursor.fetchone()
-                
-                if not row:
+                    membership_updates.append("is_active = %s")
+                    membership_params.append(is_active)
+
+                if membership_updates:
+                    membership_params.extend([user_id, company_id])
+                    cursor.execute(f"""
+                        UPDATE memberships
+                        SET {', '.join(membership_updates)}
+                        WHERE user_id = %s AND company_id = %s
+                    """, membership_params)
+
+                cursor.execute("""
+                    SELECT 1
+                    FROM memberships
+                    WHERE user_id = %s AND company_id = %s
+                """, (user_id, company_id))
+                if not cursor.fetchone():
+                    self.connection.rollback()
                     return None
-                
-                user = {
-                    "id": row[0],
-                    "company_id": row[1],
-                    "email": row[2],
-                    "full_name": row[3],
-                    "role": row[4],
-                    "is_active": row[5],
-                    "last_login": row[6],
-                    "created_at": row[7],
-                    "updated_at": row[8]
-                }
-                
+
                 self.connection.commit()
                 logger.info(f"Updated user {user_id}")
-                
-                return user
+                return self.get_user_by_id(user_id, company_id)
                 
         except Exception as e:
             self.connection.rollback()
@@ -174,10 +196,11 @@ class UserService:
         
         try:
             with self.connection.cursor() as cursor:
+                self._guard_last_owner(cursor, user_id, company_id)
                 cursor.execute("""
-                    UPDATE users
+                    UPDATE memberships
                     SET is_active = false
-                    WHERE id = %s AND company_id = %s
+                    WHERE user_id = %s AND company_id = %s
                 """, (user_id, company_id))
                 
                 affected = cursor.rowcount
@@ -200,7 +223,7 @@ class UserService:
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute("""
-                    SELECT id, company_id, email, role, token, invited_by, 
+                    SELECT id, company_id, email, role, invited_by,
                            expires_at, accepted_at, created_at
                     FROM invitations
                     WHERE company_id = %s AND accepted_at IS NULL
@@ -214,11 +237,10 @@ class UserService:
                         "company_id": row[1],
                         "email": row[2],
                         "role": row[3],
-                        "token": row[4],
-                        "invited_by": row[5],
-                        "expires_at": row[6],
-                        "accepted_at": row[7],
-                        "created_at": row[8]
+                        "invited_by": row[4],
+                        "expires_at": row[5],
+                        "accepted_at": row[6],
+                        "created_at": row[7]
                     })
                 
                 return invitations

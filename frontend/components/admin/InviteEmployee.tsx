@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useInviteUser } from '@/lib/hooks/useUsers';
+import { useAuth } from '@/lib/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,10 +20,11 @@ import { toast } from 'sonner';
 import { UserPlus, Loader2, Copy, Check } from 'lucide-react';
 
 export function InviteEmployee() {
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
-  const [role, setRole] = useState<'employee' | 'hr_manager'>('employee');
+  const [role, setRole] = useState<'member' | 'admin'>('member');
   const [invitationLink, setInvitationLink] = useState('');
   const [copied, setCopied] = useState(false);
 
@@ -42,7 +44,7 @@ export function InviteEmployee() {
           // Reset form but keep dialog open to show invitation link
           setEmail('');
           setFullName('');
-          setRole('employee');
+          setRole('member');
         },
         onError: (error: any) => {
           toast.error(error.response?.data?.detail || 'Failed to send invitation');
@@ -63,7 +65,7 @@ export function InviteEmployee() {
     setInvitationLink('');
     setEmail('');
     setFullName('');
-    setRole('employee');
+    setRole('member');
   };
 
   return (
@@ -140,8 +142,10 @@ export function InviteEmployee() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="employee">Employee</SelectItem>
-                    <SelectItem value="hr_manager">HR Manager</SelectItem>
+                    <SelectItem value="member">Member</SelectItem>
+                    {user?.role === 'owner' && (
+                      <SelectItem value="admin">Admin</SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
               </div>

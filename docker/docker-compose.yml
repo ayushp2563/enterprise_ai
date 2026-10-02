@@ -34,10 +34,12 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-enterprise_ai}
       - API_HOST=0.0.0.0
       - API_PORT=8000
-      - API_KEY=${API_KEY:-change_me_in_production}
-      - SECRET_KEY=${SECRET_KEY:-change_me_in_production}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be configured}
       - ALGORITHM=HS256
       - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - REFRESH_TOKEN_EXPIRE_DAYS=7
+      - JWT_ISSUER=enterprise-ai-platform
+      - JWT_AUDIENCE=enterprise-ai-platform-api
       - EMBEDDING_MODEL=all-MiniLM-L6-v2
       - CHUNK_SIZE=1000
       - CHUNK_OVERLAP=200

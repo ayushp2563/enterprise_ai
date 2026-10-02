@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 export default function EmployeePage() {
   return (
-    <ProtectedRoute allowedRoles={['employee', 'hr_manager', 'company_admin']}>
+    <ProtectedRoute allowedRoles={['member', 'admin', 'owner']}>
       <div className="flex flex-col h-screen">
         <DashboardHeader />
         
