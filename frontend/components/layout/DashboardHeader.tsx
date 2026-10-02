@@ -30,8 +30,8 @@ export function DashboardHeader() {
         <div className="flex items-center gap-4">
           <h1 className="text-xl font-bold">Enterprise AI Assistant</h1>
           <p className="text-sm text-muted-foreground">
-            {user.role === 'owner' ? 'Owner Dashboard' : 
-             user.role === 'admin' ? 'Admin Dashboard' : 
+            {user.role === 'owner' ? 'Owner Dashboard' :
+             user.role === 'admin' ? 'Admin Dashboard' :
              'Employee Dashboard'}
           </p>
         </div>

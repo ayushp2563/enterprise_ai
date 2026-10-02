@@ -24,7 +24,7 @@ async def list_users(
     """
     List all users in the company.
     
-    Requires: HR Manager or Admin role
+    Requires: Owner or Admin role
     """
     try:
         users = user_service.get_users_by_company(
@@ -51,7 +51,7 @@ async def get_user(
     """
     Get user details by ID.
     
-    Requires: HR Manager or Admin role
+    Requires: Owner or Admin role
     """
     try:
         user = user_service.get_user_by_id(
@@ -87,7 +87,7 @@ async def update_user(
     """
     Update user details.
     
-    Requires: Admin role
+    Requires: Owner role
     """
     try:
         if user_update.full_name is not None and user_id != current_user["id"]:
@@ -110,7 +110,10 @@ async def update_user(
                 detail="User not found"
             )
         
-        logger.info(f"User {user_id} updated by {current_user['email']}")
+        logger.info(
+            "Membership updated",
+            extra={"company_id": current_user["company_id"], "user_id": user_id},
+        )
         return UserResponse(**user)
         
     except HTTPException:
@@ -137,7 +140,7 @@ async def deactivate_user(
     """
     Deactivate a user (soft delete).
     
-    Requires: Admin role
+    Requires: Owner role
     """
     try:
         # Prevent self-deactivation
@@ -158,7 +161,10 @@ async def deactivate_user(
                 detail="User not found"
             )
         
-        logger.info(f"User {user_id} deactivated by {current_user['email']}")
+        logger.info(
+            "Membership deactivated",
+            extra={"company_id": current_user["company_id"], "user_id": user_id},
+        )
         return {"message": "User deactivated successfully"}
         
     except HTTPException:
@@ -189,7 +195,7 @@ async def invite_user(
     """
     Invite a new user to the company.
     
-    Requires: HR Manager or Admin role
+    Requires: Owner or Admin role
     """
     try:
         if current_user["role"] == "admin" and invitation.role != "member":
@@ -210,11 +216,10 @@ async def invite_user(
             extra={"company_id": current_user["company_id"]},
         )
         
-        # In production, send email here with invitation link
-        # Example: send_invitation_email(invitation.email, invitation_data["token"])
-        
         return InvitationCreatedResponse(**invitation_data)
         
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -236,7 +241,7 @@ async def list_pending_invitations(
     """
     List all pending invitations for the company.
     
-    Requires: HR Manager or Admin role
+    Requires: Owner or Admin role
     """
     try:
         invitations = user_service.get_invitations_by_company(
