@@ -73,7 +73,7 @@ source .env
 
 ```bash
 curl -X POST "http://localhost:8000/api/query/" \
-  -H "X-API-Key: f26132af20929f7f182d2b8c982818b0dbc036667ffe9ab42a27832df39b1e20" \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"question": "How many vacation days do employees get?", "top_k": 5}'
 ```

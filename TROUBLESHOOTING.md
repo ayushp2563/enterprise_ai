@@ -67,10 +67,10 @@ cd /Users/ayush/.gemini/antigravity/scratch/enterprise-ai-assistant
 
 # Delete old documents (they were uploaded with the broken code)
 curl -X DELETE "http://localhost:8000/api/documents/1" \
-  -H "X-API-Key: f26132af20929f7f182d2b8c982818b0dbc036667ffe9ab42a27832df39b1e20"
+  -H "Authorization: Bearer ${ACCESS_TOKEN}"
 
 curl -X DELETE "http://localhost:8000/api/documents/2" \
-  -H "X-API-Key: f26132af20929f7f182d2b8c982818b0dbc036667ffe9ab42a27832df39b1e20"
+  -H "Authorization: Bearer ${ACCESS_TOKEN}"
 
 # Upload fresh documents with the fixed code
 source .env
@@ -100,7 +100,7 @@ You should see output like:
 
 ```bash
 curl -X POST "http://localhost:8000/api/query/" \
-  -H "X-API-Key: f26132af20929f7f182d2b8c982818b0dbc036667ffe9ab42a27832df39b1e20" \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"question": "How many vacation days do employees get?", "top_k": 5}'
 ```
@@ -172,7 +172,7 @@ Look for errors related to:
 ```bash
 # Via API
 curl -X GET "http://localhost:8000/api/documents/" \
-  -H "X-API-Key: f26132af20929f7f182d2b8c982818b0dbc036667ffe9ab42a27832df39b1e20"
+  -H "Authorization: Bearer ${ACCESS_TOKEN}"
 
 # Via database
 docker compose exec db psql -U postgres -d enterprise_ai -c \
@@ -224,7 +224,7 @@ source .env && \
 Then test:
 ```bash
 curl -X POST "http://localhost:8000/api/query/" \
-  -H "X-API-Key: f26132af20929f7f182d2b8c982818b0dbc036667ffe9ab42a27832df39b1e20" \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"question": "How many vacation days do employees get?"}'
 ```
