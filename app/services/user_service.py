@@ -32,6 +32,12 @@ class UserService:
     @staticmethod
     def _guard_last_owner(cursor, user_id: int, company_id: int) -> None:
         """Prevent removal or demotion of the final active owner."""
+        # Serialize owner-count changes for one organization. The advisory lock
+        # is released automatically when the surrounding transaction ends.
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(%s)",
+            (company_id,)
+        )
         cursor.execute("""
             SELECT role, is_active
             FROM memberships

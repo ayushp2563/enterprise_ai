@@ -21,6 +21,24 @@ services:
     networks:
       - enterprise_ai_network
 
+  # One-shot schema migration for local development. Hosted deployments should
+  # run the same command as an explicit release step.
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-enterprise_ai}
+    command: [ "python", "scripts/init_db.py" ]
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ../scripts:/app/scripts
+    networks:
+      - enterprise_ai_network
+    restart: "no"
+
   # FastAPI application
   app:
     build:
@@ -48,8 +66,8 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ../app:/app/app
       - ../scripts:/app/scripts
