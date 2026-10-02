@@ -75,6 +75,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'fk_memberships_user_company'
+          AND conrelid = 'public.memberships'::regclass
     ) THEN
         ALTER TABLE memberships
             ADD CONSTRAINT fk_memberships_user_company
@@ -142,6 +143,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'fk_documents_uploader_company'
+          AND conrelid = 'public.documents'::regclass
     ) THEN
         ALTER TABLE documents
             ADD CONSTRAINT fk_documents_uploader_company
@@ -176,6 +178,7 @@ BEGIN
         SELECT 1
         FROM pg_constraint
         WHERE conname = 'fk_document_chunks_company'
+          AND conrelid = 'public.document_chunks'::regclass
     ) THEN
         ALTER TABLE document_chunks
             ADD CONSTRAINT fk_document_chunks_company
@@ -192,6 +195,7 @@ BEGIN
         SELECT 1
         FROM pg_constraint
         WHERE conname = 'fk_document_chunks_document_company'
+          AND conrelid = 'public.document_chunks'::regclass
     ) THEN
         ALTER TABLE document_chunks
             ADD CONSTRAINT fk_document_chunks_document_company
@@ -247,6 +251,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'fk_ingestion_jobs_document_company'
+          AND conrelid = 'public.ingestion_jobs'::regclass
     ) THEN
         ALTER TABLE ingestion_jobs
             ADD CONSTRAINT fk_ingestion_jobs_document_company
@@ -284,6 +289,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'fk_conversations_user_company'
+          AND conrelid = 'public.conversations'::regclass
     ) THEN
         ALTER TABLE conversations
             ADD CONSTRAINT fk_conversations_user_company
@@ -324,6 +330,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'fk_messages_user_company'
+          AND conrelid = 'public.messages'::regclass
     ) THEN
         ALTER TABLE messages
             ADD CONSTRAINT fk_messages_user_company
@@ -343,6 +350,7 @@ BEGIN
         SELECT 1
         FROM pg_constraint
         WHERE conname = 'fk_messages_conversation_company'
+          AND conrelid = 'public.messages'::regclass
     ) THEN
         ALTER TABLE messages
             ADD CONSTRAINT fk_messages_conversation_company
@@ -377,6 +385,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'fk_audit_events_actor_company'
+          AND conrelid = 'public.audit_events'::regclass
     ) THEN
         ALTER TABLE audit_events
             ADD CONSTRAINT fk_audit_events_actor_company
@@ -387,7 +396,83 @@ BEGIN
 END $$;
 
 -- ============================================================================
--- 8. CONSTRAINTS AND INDEXES FOR EXISTING TABLES
+-- 8. TENANT CONSISTENCY FOR EXISTING RELATIONSHIPS
+-- ============================================================================
+CREATE UNIQUE INDEX IF NOT EXISTS uq_query_logs_id_company
+    ON query_logs(id, company_id);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'fk_invitations_inviter_company'
+          AND conrelid = 'public.invitations'::regclass
+    ) THEN
+        ALTER TABLE invitations
+            ADD CONSTRAINT fk_invitations_inviter_company
+            FOREIGN KEY (invited_by, company_id)
+            REFERENCES users(id, company_id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'fk_query_logs_user_company'
+          AND conrelid = 'public.query_logs'::regclass
+    ) THEN
+        ALTER TABLE query_logs
+            ADD CONSTRAINT fk_query_logs_user_company
+            FOREIGN KEY (user_id, company_id)
+            REFERENCES users(id, company_id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'fk_hr_escalations_query_company'
+          AND conrelid = 'public.hr_escalations'::regclass
+    ) THEN
+        ALTER TABLE hr_escalations
+            ADD CONSTRAINT fk_hr_escalations_query_company
+            FOREIGN KEY (query_log_id, company_id)
+            REFERENCES query_logs(id, company_id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'fk_hr_escalations_user_company'
+          AND conrelid = 'public.hr_escalations'::regclass
+    ) THEN
+        ALTER TABLE hr_escalations
+            ADD CONSTRAINT fk_hr_escalations_user_company
+            FOREIGN KEY (user_id, company_id)
+            REFERENCES users(id, company_id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'fk_hr_escalations_resolver_company'
+          AND conrelid = 'public.hr_escalations'::regclass
+    ) THEN
+        ALTER TABLE hr_escalations
+            ADD CONSTRAINT fk_hr_escalations_resolver_company
+            FOREIGN KEY (resolved_by, company_id)
+            REFERENCES users(id, company_id);
+    END IF;
+END $$;
+
+-- ============================================================================
+-- 9. CONSTRAINTS AND INDEXES FOR EXISTING TABLES
 -- ============================================================================
 ALTER TABLE users DROP CONSTRAINT IF EXISTS ck_users_role;
 ALTER TABLE users

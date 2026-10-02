@@ -29,42 +29,6 @@ def ensure_migrations_table(conn):
     conn.commit()
 
 
-def baseline_legacy_schema(conn):
-    """
-    Record migration 001 when upgrading a database initialized before the
-    migration ledger existed.
-
-    The complete table set is checked so a partially applied migration is not
-    silently treated as successful.
-    """
-    with conn.cursor() as cursor:
-        cursor.execute("""
-            SELECT
-                to_regclass('public.companies') IS NOT NULL
-                AND to_regclass('public.users') IS NOT NULL
-                AND to_regclass('public.invitations') IS NOT NULL
-                AND to_regclass('public.hr_escalations') IS NOT NULL
-                AND EXISTS (
-                    SELECT 1
-                    FROM information_schema.columns
-                    WHERE table_schema = 'public'
-                      AND table_name = 'documents'
-                      AND column_name = 'company_id'
-                )
-        """)
-        legacy_schema_is_complete = cursor.fetchone()[0]
-
-        if legacy_schema_is_complete:
-            cursor.execute(
-                """
-                INSERT INTO schema_migrations (version, filename)
-                VALUES ('001', '001_add_multi_tenancy.sql')
-                ON CONFLICT (version) DO NOTHING
-                """
-            )
-    conn.commit()
-
-
 def run_sql_file(conn, filepath):
     """Apply one migration atomically unless its version is already recorded."""
     version = filepath.name.split('_', 1)[0]
@@ -188,7 +152,6 @@ def init_database():
             cursor.close()
             conn.autocommit = False
             ensure_migrations_table(conn)
-            baseline_legacy_schema(conn)
 
             migration_files = sorted(migrations_dir.glob('*.sql'))
             for migration_file in migration_files:

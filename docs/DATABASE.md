@@ -262,7 +262,8 @@ These constraints reject invalid state even if a future code path bypasses Pydan
 - Each migration version is applied once.
 - A migration and its ledger record commit atomically.
 - A failed migration rolls back.
-- Existing databases created before the ledger are baselined only when all tables from migration 001 are present.
+- Migration 001 is idempotent so databases created before the ledger can safely
+  run it once more and record it atomically.
 - Migration files are applied in filename order.
 
 Production deployments should run migrations as an explicit release step before starting the new application version.
