@@ -419,4 +419,3 @@ CREATE INDEX IF NOT EXISTS idx_query_logs_company_user_created
     ON query_logs(company_id, user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_hr_escalations_company_status_created
     ON hr_escalations(company_id, status, created_at DESC);
-
