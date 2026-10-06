@@ -39,7 +39,7 @@ class TestAPIEndpoints:
             "public_id": uuid4(),
             "company_id": 1,
             "membership_id": uuid4(),
-            "email": "user@example.test",
+            "email": "user@example.com",
             "full_name": "Test User",
             "role": "member",
             "is_active": True,
