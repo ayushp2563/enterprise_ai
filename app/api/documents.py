@@ -94,6 +94,7 @@ async def upload_document(
             vector_store = get_vector_store()
             chunk_ids = vector_store.store_document_chunks(
                 document_id=document_id,
+                company_id=current_user["company_id"],
                 chunks=result['chunks'],
                 embeddings=result['embeddings']
             )
