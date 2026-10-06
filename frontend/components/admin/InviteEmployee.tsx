@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useInviteUser } from '@/lib/hooks/useUsers';
 import { useAuth } from '@/lib/context/AuthContext';
+import { getApiErrorMessage } from '@/lib/api/errors';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -46,8 +47,8 @@ export function InviteEmployee() {
           setFullName('');
           setRole('member');
         },
-        onError: (error: any) => {
-          toast.error(error.response?.data?.detail || 'Failed to send invitation');
+        onError: (error: unknown) => {
+          toast.error(getApiErrorMessage(error, 'Failed to send invitation'));
         },
       }
     );
@@ -80,7 +81,7 @@ export function InviteEmployee() {
         <DialogHeader>
           <DialogTitle>Invite Employee</DialogTitle>
           <DialogDescription>
-            Send an invitation to a new team member. They'll receive an email with a link to set up their account.
+            Create an invitation link for a new team member. They&apos;ll use it to join the organization.
           </DialogDescription>
         </DialogHeader>
 
@@ -137,7 +138,11 @@ export function InviteEmployee() {
 
               <div className="space-y-2">
                 <Label htmlFor="role">Role *</Label>
-                <Select value={role} onValueChange={(value: any) => setRole(value)} disabled={isPending}>
+                <Select
+                  value={role}
+                  onValueChange={(value) => setRole(value as 'member' | 'admin')}
+                  disabled={isPending}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>

@@ -6,8 +6,9 @@ import { DashboardHeader } from '@/components/layout/DashboardHeader';
 import { ChatMessage } from '@/components/qa/ChatMessage';
 import { ChatInput } from '@/components/qa/ChatInput';
 import { Button } from '@/components/ui/button';
-import { useSubmitQuery, useQueryHistory } from '@/lib/hooks/useQuery';
-import { Sparkles, Loader2, Plus, ArrowRight } from 'lucide-react';
+import { useSubmitQuery } from '@/lib/hooks/useQuery';
+import { getApiErrorMessage } from '@/lib/api/errors';
+import { Sparkles, Plus, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 import type { QueryResponse } from '@/types/documents';
 
@@ -24,7 +25,6 @@ export default function QAPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const { mutate: submitQuery, isPending } = useSubmitQuery();
-  const { data: history, isLoading: isLoadingHistory } = useQueryHistory();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -62,8 +62,8 @@ export default function QAPage() {
             setConversationId(data.conversation_id);
           }
         },
-        onError: (error: any) => {
-          toast.error(error.response?.data?.detail || 'Failed to get answer');
+        onError: (error: unknown) => {
+          toast.error(getApiErrorMessage(error, 'Failed to get answer'));
           // Remove the user message on error
           setMessages((prev) => prev.slice(0, -1));
         },
@@ -95,7 +95,7 @@ export default function QAPage() {
                   Policy Assistant
                 </h2>
                 <p className="text-sm sm:text-base text-muted-foreground mt-1">
-                  Ask anything about your company's documents
+                  Ask anything about your company&apos;s documents
                 </p>
               </div>
               <Button
@@ -122,7 +122,7 @@ export default function QAPage() {
                         How can I help you today?
                       </h3>
                       <p className="text-muted-foreground mb-8 text-base sm:text-lg leading-relaxed">
-                        I'm your AI assistant trained on your company's knowledge base. Here are some examples of what you can ask me:
+                        I&apos;m your AI assistant trained on your company&apos;s knowledge base. Here are some examples of what you can ask me:
                       </p>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useDocuments, useDeleteDocument } from '@/lib/hooks/useDocuments';
+import { getApiErrorMessage } from '@/lib/api/errors';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -41,8 +42,8 @@ export function DocumentList() {
           setDeleteDialogOpen(false);
           setDocumentToDelete(null);
         },
-        onError: (error: any) => {
-          toast.error(error.response?.data?.detail || 'Failed to delete document');
+        onError: (error: unknown) => {
+          toast.error(getApiErrorMessage(error, 'Failed to delete document'));
         },
       });
     }
@@ -59,7 +60,7 @@ export function DocumentList() {
       <Card>
         <CardHeader>
           <CardTitle>Documents</CardTitle>
-          <CardDescription>Manage your company's policy documents</CardDescription>
+          <CardDescription>Manage your company&apos;s policy documents</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (

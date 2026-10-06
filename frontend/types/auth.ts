@@ -18,7 +18,7 @@ export interface Company {
     name: string;
     slug: string;
     domain: string | null;
-    settings: Record<string, any>;
+    settings: Record<string, unknown>;
     subscription_tier: string;
     max_employees: number;
     max_documents: number;

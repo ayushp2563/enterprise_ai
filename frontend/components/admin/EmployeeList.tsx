@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useUsers, useDeactivateUser } from '@/lib/hooks/useUsers';
 import { useAuth } from '@/lib/context/AuthContext';
+import { getApiErrorMessage } from '@/lib/api/errors';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -44,15 +45,18 @@ export function EmployeeList() {
           setDeleteDialogOpen(false);
           setUserToDeactivate(null);
         },
-        onError: (error: any) => {
-          toast.error(error.response?.data?.detail || 'Failed to deactivate user');
+        onError: (error: unknown) => {
+          toast.error(getApiErrorMessage(error, 'Failed to deactivate user'));
         },
       });
     }
   };
 
   const getRoleBadge = (role: string) => {
-    const variants: Record<string, { variant: any; label: string }> = {
+    const variants: Record<string, {
+      variant: 'default' | 'secondary' | 'outline';
+      label: string;
+    }> = {
       owner: { variant: 'default', label: 'Owner' },
       admin: { variant: 'secondary', label: 'Admin' },
       member: { variant: 'outline', label: 'Member' },

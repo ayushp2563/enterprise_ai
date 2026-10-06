@@ -1,9 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/context/AuthContext';
+import { getApiErrorMessage } from '@/lib/api/errors';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -44,10 +44,8 @@ export default function RegisterPage() {
     try {
       await registerCompany(formData);
       toast.success('Company registered successfully!');
-    } catch (error: any) {
-      console.error('Registration error:', error);
-      const errorMessage = error.response?.data?.detail || 'Registration failed. Please try again.';
-      toast.error(Array.isArray(errorMessage) ? errorMessage[0].msg : errorMessage);
+    } catch (error: unknown) {
+      toast.error(getApiErrorMessage(error, 'Registration failed. Please try again.'));
     } finally {
       setLoading(false);
     }

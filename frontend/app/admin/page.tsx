@@ -22,7 +22,7 @@ export default function AdminPage() {
             <div>
               <h2 className="text-3xl font-bold tracking-tight">Admin Dashboard</h2>
               <p className="text-muted-foreground">
-                Manage your company's documents, employees, and settings
+                Manage your company&apos;s documents, employees, and settings
               </p>
             </div>
 
