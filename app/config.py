@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     # API
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    cors_origins: str = "http://localhost:3000"
 
     # Security
     secret_key: str = Field(min_length=32)
@@ -88,6 +89,14 @@ class Settings(BaseSettings):
 
     # Rate Limiting
     rate_limit_per_minute: int = 60
+
+    @property
+    def allowed_cors_origins(self) -> list[str]:
+        return [
+            origin.strip()
+            for origin in self.cors_origins.split(",")
+            if origin.strip()
+        ]
 
     # ✅ Pydantic v2 config
     model_config = SettingsConfigDict(

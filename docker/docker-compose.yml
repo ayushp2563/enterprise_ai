@@ -58,6 +58,7 @@ services:
       - REFRESH_TOKEN_EXPIRE_DAYS=7
       - JWT_ISSUER=enterprise-ai-platform
       - JWT_AUDIENCE=enterprise-ai-platform-api
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
       - EMBEDDING_MODEL=all-MiniLM-L6-v2
       - CHUNK_SIZE=1000
       - CHUNK_OVERLAP=200
@@ -73,6 +74,22 @@ services:
       - ../app:/app/app
       - ../scripts:/app/scripts
       - document_storage:/app/data/documents
+    networks:
+      - enterprise_ai_network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - app
     networks:
       - enterprise_ai_network
     restart: unless-stopped
