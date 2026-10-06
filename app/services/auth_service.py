@@ -22,9 +22,8 @@ class AuthService:
     """Service for authentication and authorization."""
     
     def __init__(self):
-        """Initialize the auth service."""
+        """Initialize lazily so unauthenticated rejection never requires DB I/O."""
         self.connection = None
-        self._connect()
     
     def _connect(self):
         """Establish database connection."""

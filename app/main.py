@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 import psycopg2
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,11 +16,23 @@ configure_logging()
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    logger.info(
+        "application_starting",
+        extra={"environment": settings.environment},
+    )
+    yield
+    logger.info("application_stopping")
+
+
 # Create FastAPI app
 app = FastAPI(
     title="Enterprise AI Assistant",
     description="AI-Powered Enterprise Assistant with RAG and Workflow Automation",
-    version="2.0.0"
+    version="2.0.0",
+    lifespan=lifespan,
 )
 
 # Configure CORS
@@ -83,20 +96,6 @@ async def readiness():
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"status": "not_ready", "database": "unavailable"},
         ) from exc
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Startup event handler."""
-    logger.info("Starting Enterprise AI Assistant...")
-    logger.info(f"Environment: {settings.environment}")
-    logger.info(f"Using Groq model: {settings.groq_model}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Shutdown event handler."""
-    logger.info("Shutting down Enterprise AI Assistant...")
 
 
 if __name__ == "__main__":
