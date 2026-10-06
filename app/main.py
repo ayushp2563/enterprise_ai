@@ -1,7 +1,7 @@
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import query, documents, workflows, auth, users, hr
+from app.api import query, documents, workflows, auth, users, hr, conversations
 from app.config import get_settings
 
 # Configure logging
@@ -36,6 +36,7 @@ app.include_router(query.router)
 app.include_router(documents.router)
 app.include_router(workflows.router)
 app.include_router(hr.router)
+app.include_router(conversations.router)
 
 
 @app.get("/")

@@ -78,6 +78,13 @@ class Settings(BaseSettings):
     chunk_size: int = 1000
     chunk_overlap: int = 200
     top_k_results: int = 5
+    retrieval_similarity_threshold: float = 0.35
+
+    # Document ingestion
+    document_storage_path: str = "/app/data/documents"
+    max_upload_bytes: int = 10 * 1024 * 1024
+    ingestion_poll_seconds: float = 2.0
+    ingestion_max_attempts: int = 3
 
     # Rate Limiting
     rate_limit_per_minute: int = 60

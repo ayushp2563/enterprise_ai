@@ -63,6 +63,7 @@ services:
       - CHUNK_OVERLAP=200
       - TOP_K_RESULTS=5
       - RATE_LIMIT_PER_MINUTE=60
+      - DOCUMENT_STORAGE_PATH=/app/data/documents
     ports:
       - "8000:8000"
     depends_on:
@@ -71,12 +72,40 @@ services:
     volumes:
       - ../app:/app/app
       - ../scripts:/app/scripts
+      - document_storage:/app/data/documents
+    networks:
+      - enterprise_ai_network
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: [ "python", "scripts/worker.py" ]
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured}@db:5432/${POSTGRES_DB:-enterprise_ai}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be configured}
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - CHUNK_SIZE=1000
+      - CHUNK_OVERLAP=200
+      - DOCUMENT_STORAGE_PATH=/app/data/documents
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ../app:/app/app
+      - ../scripts:/app/scripts
+      - document_storage:/app/data/documents
     networks:
       - enterprise_ai_network
     restart: unless-stopped
 
 volumes:
   postgres_data:
+    driver: local
+  document_storage:
     driver: local
 
 networks:
