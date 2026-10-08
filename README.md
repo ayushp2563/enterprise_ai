@@ -1,261 +1,289 @@
-# Enterprise AI Assistant
+# Enterprise AI Platform
 
-AI-Powered Enterprise Assistant with RAG (Retrieval-Augmented Generation) and Workflow Automation built with FastAPI, Groq Cloud, and PostgreSQL.
+A multi-tenant internal knowledge platform that ingests company documents and
+answers employee questions with retrieval-augmented generation (RAG), grounded
+citations, conversation history, and role-based access control.
 
-## 🎯 Features
+The project is designed as a portfolio-scale modular monolith: understandable,
+testable, and deployable without introducing infrastructure that its workload
+does not justify.
 
-- **RAG-Powered Q&A**: Answer questions using internal documents with source citations
-- **Document Ingestion**: Support for PDF, DOCX, TXT, and Markdown files
-- **Vector Search**: Fast similarity search using PostgreSQL with pgvector
-- **LLM Integration**: Powered by Groq Cloud's llama-3.3-70b-versatile model
-- **Workflow Automation**: 
-  - Automated ticket creation
-  - Report summarization
-- **REST API**: FastAPI-based API with authentication
-- **Security**: API key authentication and input sanitization
+## Problem
 
-## 🛠️ Tech Stack
+Internal policies are often distributed across documents and difficult to
+search. This application gives each organization an isolated workspace where
+authorized users can upload documents and ask questions. Answers are generated
+only from retrieved organization content and include source chunks.
 
-- **Backend**: Python 3.11, FastAPI
-- **LLM**: Groq Cloud (llama-3.3-70b-versatile)
-- **Database**: PostgreSQL 16 with pgvector extension
-- **Embeddings**: SentenceTransformers (all-MiniLM-L6-v2)
-- **Deployment**: Docker & Docker Compose
+## Implemented features
 
-## 📋 Prerequisites
+- Global user identities with multi-organization memberships
+- Owner, admin, and member authorization enforced by FastAPI
+- Short-lived JWT access tokens and rotating, revocable refresh sessions
+- Tenant-scoped document, vector, conversation, and analytics access
+- Durable asynchronous PDF, DOCX, text, and Markdown ingestion
+- SHA-256 duplicate detection and pending/processing/completed/failed states
+- SentenceTransformer embeddings and PostgreSQL/pgvector cosine search
+- Grounded Groq LLM answers, chunk/page citations, and abstention
+- Prompt-injection boundaries treating documents as untrusted content
+- Persisted conversations and message citation snapshots
+- Version-controlled RAG evaluation cases
+- Next.js dashboard for auth, users, documents, ingestion, and chat
+- Structured logs, request IDs, readiness checks, and practical rate limiting
+- Full-stack Docker Compose and GitHub Actions CI
 
-- Docker and Docker Compose
-- Groq API key ([Get one here](https://console.groq.com))
+## Architecture
 
-## 🚀 Quick Start
-
-### 1. Clone and Setup
-
-```bash
-cd /Users/ayush/.gemini/antigravity/scratch/enterprise-ai-assistant
+```mermaid
+flowchart LR
+    Browser[Next.js / React] -->|Bearer access token| API[FastAPI API]
+    API --> DB[(PostgreSQL + pgvector)]
+    API --> Storage[(Private document storage)]
+    API --> LLM[Groq LLM API]
+    Worker[Ingestion worker] --> DB
+    Worker --> Storage
+    Worker --> Embeddings[SentenceTransformer]
 ```
 
-### 2. Configure Environment
+The API and worker use the same Python codebase but run as separate processes.
+PostgreSQL stores both application data and durable ingestion jobs. This avoids
+adding Redis, Kafka, microservices, or Kubernetes to a workload that does not
+need them.
 
-Copy the example environment file and add your Groq API key:
+Detailed decisions: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Technology stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS, TanStack Query |
+| Backend | Python 3.11, FastAPI, Pydantic |
+| Database | PostgreSQL 16, psycopg2, pgvector |
+| AI | SentenceTransformers, Groq, RAG |
+| Documents | pypdf, python-docx, Markdown/text |
+| Delivery | Docker, Docker Compose, GitHub Actions |
+
+## Database and tenancy
+
+The tenant root is currently named `companies` in the physical schema and
+presented as an organization/workspace in the product.
+
+Important relationships:
+
+```mermaid
+erDiagram
+    USERS ||--o{ MEMBERSHIPS : has
+    COMPANIES ||--o{ MEMBERSHIPS : contains
+    COMPANIES ||--o{ DOCUMENTS : owns
+    DOCUMENTS ||--o{ DOCUMENT_CHUNKS : contains
+    DOCUMENTS ||--|| INGESTION_JOBS : processed_by
+    COMPANIES ||--o{ CONVERSATIONS : owns
+    CONVERSATIONS ||--o{ MESSAGES : contains
+```
+
+Every tenant-owned query includes the organization ID derived from the active
+membership. Composite foreign keys validate actor membership at the database
+boundary. Cross-tenant document and vector access is covered by integration
+tests.
+
+Schema and index rationale: [`docs/DATABASE.md`](docs/DATABASE.md).
+
+## Authentication and authorization
+
+Authentication verifies identity. Authorization loads the active membership
+from PostgreSQL on every protected request; roles in client input or JWT claims
+are not trusted.
+
+| Capability | Owner | Admin | Member |
+|---|:---:|:---:|:---:|
+| Query documents | Yes | Yes | Yes |
+| Upload/manage documents | Yes | Yes | No |
+| Invite members | Yes | Yes | No |
+| Change roles/deactivate memberships | Yes | No | No |
+
+The last active owner cannot be removed. Invitation and refresh secrets are
+stored only as hashes.
+
+Details: [`docs/AUTHORIZATION.md`](docs/AUTHORIZATION.md).
+
+## Ingestion pipeline
+
+```text
+upload → validation → private storage → checksum → pending job
+       → extraction → cleaning → page-aware chunking
+       → embeddings → pgvector → completed/failed
+```
+
+The API returns `202 Accepted`; a worker claims jobs with
+`FOR UPDATE SKIP LOCKED`. Failed jobs have bounded retries and safe user-facing
+errors.
+
+## RAG pipeline
+
+```text
+question → embedding → tenant-filtered vector search → relevance threshold
+         → untrusted-context prompt → LLM → citation validation
+         → persisted answer and source snapshot
+```
+
+Retrieved text is explicitly marked as untrusted. The model is instructed not
+to follow document instructions or invent source IDs. Citation markers are
+validated against retrieved chunks before returning the answer.
+
+## Evaluation
+
+`evaluation/rag_cases.jsonl` contains grounded and abstention cases. The runner
+reports:
+
+- expected-document retrieval
+- expected answer-term presence
+- citation marker validity
+- abstention correctness
+- measured run latency
+
+The checks are transparent heuristics, not objective accuracy claims. See
+[`docs/EVALUATION.md`](docs/EVALUATION.md).
+
+## Local setup
+
+Prerequisites:
+
+- Docker with Compose
+- A Groq API key
 
 ```bash
+git clone <repository-url>
+cd enterprise_ai
 cp .env.example .env
 ```
 
-Edit `.env` and set your Groq API key:
-```
-GROQ_API_KEY=your_groq_api_key_here
-API_KEY=your_secure_api_key_here
-SECRET_KEY=your_secret_key_here
-```
-
-### 3. Start Services
+Replace all placeholder secrets in `.env`, then run:
 
 ```bash
-cd docker
-docker-compose up -d
+docker compose -f docker/docker-compose.yml --env-file .env up --build
 ```
 
-This will start:
-- PostgreSQL with pgvector on port 5432
-- FastAPI application on port 8000
+Services:
 
-### 4. Initialize Database
+- Frontend: <http://localhost:3000>
+- FastAPI/OpenAPI: <http://localhost:8000/docs>
+- API readiness: <http://localhost:8000/ready>
+- PostgreSQL: `localhost:5432` for local development only
 
-Wait for services to be healthy, then initialize the database:
+The one-shot `migrate` service applies migrations before the API and worker
+start.
+
+### Sample documents
+
+After registering an organization and obtaining an owner/admin access token:
 
 ```bash
-docker-compose exec app python scripts/init_db.py
+export ACCESS_TOKEN="<access-token>"
+./scripts/upload_samples.sh
 ```
 
-### 5. Verify Installation
+The UI polls ingestion state until the worker completes processing.
+
+## Environment variables
+
+| Variable | Required | Purpose |
+|---|:---:|---|
+| `POSTGRES_PASSWORD` | Local Compose | Local database password |
+| `DATABASE_URL` | Hosted | PostgreSQL connection |
+| `SECRET_KEY` | Yes | JWT signing key, minimum 32 characters |
+| `GROQ_API_KEY` | Yes | LLM provider credential |
+| `GROQ_MODEL` | No | Generation model |
+| `CORS_ORIGINS` | No | Comma-separated frontend origins |
+| `NEXT_PUBLIC_API_URL` | Frontend | Browser-visible API origin |
+| `DOCUMENT_STORAGE_PATH` | No | Private local storage root |
+| `RATE_LIMIT_PER_MINUTE` | No | Per-process API limit |
+
+Never commit `.env` or provider credentials.
+
+## Testing
+
+Backend:
 
 ```bash
-curl http://localhost:8000/health
-```
-
-You should see: `{"status":"healthy","service":"enterprise-ai-assistant"}`
-
-## 📚 API Documentation
-
-Once running, visit:
-- **Interactive API Docs**: http://localhost:8000/docs
-- **Alternative Docs**: http://localhost:8000/redoc
-
-### Authentication
-
-All API endpoints (except `/health` and `/`) require an API key in the header:
-
-```bash
-X-API-Key: your_api_key_here
-```
-
-### Key Endpoints
-
-#### 1. Upload Document
-
-```bash
-curl -X POST "http://localhost:8000/api/documents/upload" \
-  -H "X-API-Key: your_api_key_here" \
-  -F "file=@document.pdf" \
-  -F "title=Company Policy"
-```
-
-#### 2. Query Documents (RAG)
-
-```bash
-curl -X POST "http://localhost:8000/api/query/" \
-  -H "X-API-Key: your_api_key_here" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "What is our vacation policy?",
-    "top_k": 5
-  }'
-```
-
-#### 3. Create Ticket (Workflow)
-
-```bash
-curl -X POST "http://localhost:8000/api/workflows/execute" \
-  -H "X-API-Key: your_api_key_here" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workflow_type": "ticket_creation",
-    "parameters": {
-      "title": "Bug in login page",
-      "description": "Users cannot log in with SSO",
-      "priority": "high",
-      "category": "bug"
-    }
-  }'
-```
-
-#### 4. Summarize Report (Workflow)
-
-```bash
-curl -X POST "http://localhost:8000/api/workflows/execute" \
-  -H "X-API-Key: your_api_key_here" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workflow_type": "report_summary",
-    "parameters": {
-      "report_text": "Your long report text here...",
-      "max_length": 500
-    }
-  }'
-```
-
-#### 5. List Documents
-
-```bash
-curl -X GET "http://localhost:8000/api/documents/" \
-  -H "X-API-Key: your_api_key_here"
-```
-
-## 🏗️ Project Structure
-
-```
-enterprise-ai-assistant/
-├── app/
-│   ├── main.py                    # FastAPI application
-│   ├── config.py                  # Configuration management
-│   ├── models/                    # Pydantic models
-│   │   ├── documents.py
-│   │   └── workflows.py
-│   ├── services/                  # Business logic
-│   │   ├── document_ingestion.py  # Text extraction & chunking
-│   │   ├── vector_store.py        # PostgreSQL pgvector
-│   │   ├── llm_service.py         # Groq Cloud integration
-│   │   ├── rag_engine.py          # RAG orchestration
-│   │   └── workflow_automation.py # Workflow execution
-│   ├── api/                       # API routes
-│   │   ├── query.py
-│   │   ├── documents.py
-│   │   └── workflows.py
-│   └── security/                  # Authentication
-│       └── auth.py
-├── docker/
-│   ├── Dockerfile
-│   └── docker-compose.yml
-├── scripts/
-│   └── init_db.py                 # Database initialization
-├── tests/                         # Test files
-├── requirements.txt
-├── .env.example
-└── README.md
-```
-
-## 🧪 Development
-
-### Install Dependencies Locally
-
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
+pytest -q
 ```
 
-### Run Tests
+Database integration tests require a migrated pgvector database:
 
 ```bash
-pytest tests/ -v --cov=app
+RUN_DB_TESTS=1 pytest tests/integration -q
 ```
 
-### View Logs
+Frontend:
 
 ```bash
-docker-compose logs -f app
+cd frontend
+npm ci
+npm run lint
+npm run build
 ```
 
-### Stop Services
+CI performs migrations, backend tests, frontend lint, and a production frontend
+build.
 
-```bash
-docker-compose down
-```
+## Deployment
 
-### Reset Database
+The repository provides:
 
-```bash
-docker-compose down -v
-docker-compose up -d
-docker-compose exec app python scripts/init_db.py
-```
+- production backend and frontend Dockerfiles
+- `docker/docker-compose.prod.yml` for a single-host deployment
+- an explicit migration release command
+- separate API and worker processes
+- liveness and database readiness endpoints
 
-## 🔒 Security Notes
+Use managed PostgreSQL with pgvector and private persistent/object storage for a
+hosted deployment. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
-This implementation includes **basic security**:
-- API key authentication
-- Input sanitization
-- Rate limiting (configured, not enforced in code)
+## Security considerations
 
-For production use, consider adding:
-- JWT tokens with expiration
-- Role-based access control (RBAC)
-- HTTPS/TLS encryption
-- Database connection pooling
-- Advanced rate limiting middleware
-- Audit logging
+Implemented controls include server-side RBAC, tenant filters, membership
+foreign keys, hashed passwords/tokens, explicit CORS, upload limits, rate
+limiting, private storage keys, prompt boundaries, and safe structured logging.
 
-## 🎓 Why This Project?
+The application is not claimed to be completely secure. See known limitations
+below and [`docs/AUTHORIZATION.md`](docs/AUTHORIZATION.md).
 
-This project demonstrates key skills for an **IBM Entry-Level AI Engineer**:
+## Known limitations
 
-✅ **Full-stack AI fundamentals** - RAG, LLM integration, vector search  
-✅ **Cloud-ready architecture** - Docker, microservices, REST APIs  
-✅ **Production practices** - Logging, error handling, security  
-✅ **Collaboration-ready** - Clean code, documentation, testing  
+- Local document storage is appropriate only when API and worker share a
+  persistent volume; multi-host deployment needs object storage.
+- Rate limiting is per process rather than shared across replicas.
+- Access tokens remain valid until their short expiry unless the associated
+  identity, membership, or organization is deactivated.
+- No email delivery, password reset, MFA, SSO, malware scanner, or RLS policy is
+  implemented.
+- The evaluation dataset is intentionally small.
+- The analytics and HR interfaces are basic.
+- Live provider and deployment behavior depends on external credentials and was
+  not measured in CI.
 
-## 📝 License
+## Intentional non-features
 
-MIT License - feel free to use this for your portfolio!
+This project does not use Kubernetes, microservices, Kafka, Redis, autonomous
+agents, fine-tuning, or multiple vector databases. They would add complexity
+without improving the demonstrated use case.
 
-## 🤝 Contributing
+## Future improvements
 
-This is a portfolio project, but suggestions are welcome! Open an issue or submit a pull request.
+- Object storage adapter and malware scanning
+- Transaction-scoped PostgreSQL RLS
+- Email delivery and password recovery
+- Larger domain evaluation corpus
+- Shared gateway rate limiting for multi-replica deployments
+- Hybrid retrieval or reranking only if evaluation demonstrates a need
 
-## 📧 Contact
+## Additional documentation
 
-Built as a resume project for AI/ML engineering roles.
-# enterprise_ai
-# enterprise_ai
+- [Architecture](docs/ARCHITECTURE.md)
+- [Database](docs/DATABASE.md)
+- [Authorization](docs/AUTHORIZATION.md)
+- [Evaluation](docs/EVALUATION.md)
+- [Deployment](docs/DEPLOYMENT.md)
+- [Interview preparation](INTERVIEW.md)
+- [Resume section](docs/RESUME.md)

@@ -292,9 +292,10 @@ Production deployments should run migrations as an explicit release step before 
 
 - Legacy identity columns remain as a compatibility bridge, but the API no
   longer uses them for authorization.
-- New ingestion jobs are not yet created or processed by application code.
-- Conversation and message APIs do not yet exist.
-- Public UUIDs are not yet used by API routes.
+- Document uploads create ingestion jobs, and the worker processes them.
+- Conversation and message APIs persist tenant-scoped chat history.
+- Public UUIDs are returned for documents, but most routes still use internal
+  integer identifiers.
 - RLS is deferred until transaction-scoped tenant context is implemented.
 - Existing timestamps from the original schema remain `TIMESTAMP`; new tables use `TIMESTAMPTZ`. Converting legacy timestamps requires an explicit timezone assumption and should not be done silently.
 
