@@ -1,6 +1,5 @@
 'use client';
 
-import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FileText, ChevronDown, ChevronUp, Bot, User } from 'lucide-react';
@@ -77,7 +76,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
                           </Badge>
                         </div>
                         <p className="text-muted-foreground text-xs sm:text-sm line-clamp-3 leading-relaxed">
-                          {source.chunk_text}
+                          {source.excerpt}
                         </p>
                       </div>
                     ))}

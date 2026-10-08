@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional, List
+from uuid import UUID
 from pydantic import BaseModel, Field
 
 
@@ -45,6 +46,7 @@ class QueryRequest(BaseModel):
     """Query request model."""
     question: str = Field(..., min_length=1, max_length=1000)
     top_k: Optional[int] = Field(default=5, ge=1, le=20)
+    conversation_id: Optional[UUID] = None
 
 
 class QueryResponse(BaseModel):
@@ -57,6 +59,8 @@ class QueryResponse(BaseModel):
     should_escalate: bool
     escalation_reason: Optional[str] = None
     hr_contact: Optional[dict] = None
+    conversation_id: UUID
+    message_id: UUID
 
 
 class QueryLog(BaseModel):

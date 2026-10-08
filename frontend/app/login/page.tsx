@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import axios from 'axios';
 import Link from 'next/link';
 import { useAuth } from '@/lib/context/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -14,20 +14,26 @@ import { Loader2 } from 'lucide-react';
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [organizationSlug, setOrganizationSlug] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
-  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      await login({ email, password });
+      await login({
+        email,
+        password,
+        organization_slug: organizationSlug || undefined,
+      });
       toast.success('Login successful!');
-    } catch (error: any) {
-      console.error('Login error:', error);
-      toast.error(error.response?.data?.detail || 'Login failed. Please check your credentials.');
+    } catch (error: unknown) {
+      const detail = axios.isAxiosError(error)
+        ? error.response?.data?.detail
+        : undefined;
+      toast.error(detail || 'Login failed. Please check your credentials.');
     } finally {
       setLoading(false);
     }
@@ -44,6 +50,19 @@ export default function LoginPage() {
         </CardHeader>
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="organizationSlug">Organization slug</Label>
+              <Input
+                id="organizationSlug"
+                placeholder="acme-corporation"
+                value={organizationSlug}
+                onChange={(e) => setOrganizationSlug(e.target.value)}
+                disabled={loading}
+              />
+              <p className="text-xs text-muted-foreground">
+                Required only when your account belongs to multiple organizations.
+              </p>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
@@ -75,7 +94,7 @@ export default function LoginPage() {
               Sign in
             </Button>
             <div className="text-sm text-center text-muted-foreground">
-              Don't have an account?{' '}
+              Don&apos;t have an account?{' '}
               <Link href="/register" className="text-primary hover:underline">
                 Register your company
               </Link>

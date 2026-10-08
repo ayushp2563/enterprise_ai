@@ -16,13 +16,64 @@ load_dotenv()
 DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/enterprise_ai')
 
 
-def run_sql_file(cursor, filepath):
-    """Execute SQL commands from a file."""
+def ensure_migrations_table(conn):
+    """Create the migration ledger before applying versioned SQL files."""
+    with conn.cursor() as cursor:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version VARCHAR(100) PRIMARY KEY,
+                filename VARCHAR(255),
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+
+            ALTER TABLE schema_migrations
+                ADD COLUMN IF NOT EXISTS filename VARCHAR(255);
+            ALTER TABLE schema_migrations
+                ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ
+                    NOT NULL DEFAULT NOW();
+
+            UPDATE schema_migrations
+            SET filename = 'legacy_' || version || '.sql'
+            WHERE filename IS NULL;
+
+            ALTER TABLE schema_migrations
+                ALTER COLUMN filename SET NOT NULL;
+        """)
+    conn.commit()
+
+
+def run_sql_file(conn, filepath):
+    """Apply one migration atomically unless its version is already recorded."""
+    version = filepath.name.split('_', 1)[0]
+
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT 1 FROM schema_migrations WHERE version = %s",
+            (version,)
+        )
+        if cursor.fetchone():
+            print(f"⏭️  Skipping already applied migration: {filepath.name}")
+            return
+
     print(f"Running SQL file: {filepath}")
-    with open(filepath, 'r') as f:
-        sql = f.read()
-        cursor.execute(sql)
-    print(f"✅ Completed: {filepath}")
+    try:
+        with open(filepath, 'r', encoding='utf-8') as migration_file:
+            sql = migration_file.read()
+
+        with conn.cursor() as cursor:
+            cursor.execute(sql)
+            cursor.execute(
+                """
+                INSERT INTO schema_migrations (version, filename)
+                VALUES (%s, %s)
+                """,
+                (version, filepath.name)
+            )
+        conn.commit()
+        print(f"✅ Completed: {filepath}")
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def init_database():
@@ -30,7 +81,7 @@ def init_database():
     
     try:
         # Connect to database
-        print(f"Connecting to database...")
+        print("Connecting to database...")
         conn = psycopg2.connect(DATABASE_URL)
         conn.autocommit = True
         cursor = conn.cursor()
@@ -109,9 +160,17 @@ def init_database():
         
         migrations_dir = Path(__file__).parent / 'migrations'
         if migrations_dir.exists():
+            # Base tables above predate the migration ledger. Versioned migrations
+            # run transactionally so a failed migration is never marked complete.
+            cursor.close()
+            conn.autocommit = False
+            ensure_migrations_table(conn)
+
             migration_files = sorted(migrations_dir.glob('*.sql'))
             for migration_file in migration_files:
-                run_sql_file(cursor, migration_file)
+                run_sql_file(conn, migration_file)
+
+            cursor = conn.cursor()
         else:
             print("No migrations directory found, skipping migrations.")
         

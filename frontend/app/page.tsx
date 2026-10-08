@@ -14,9 +14,9 @@ export default function HomePage() {
   useEffect(() => {
     if (!loading && user) {
       // Redirect to appropriate dashboard
-      if (user.role === 'company_admin') {
+      if (user.role === 'owner') {
         router.push('/admin');
-      } else if (user.role === 'hr_manager') {
+      } else if (user.role === 'admin') {
         router.push('/hr');
       } else {
         router.push('/employee');

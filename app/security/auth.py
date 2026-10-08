@@ -1,19 +1,17 @@
 import logging
 from typing import Optional
-from datetime import datetime
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.services.auth_service import get_auth_service, AuthService
-from app.models.auth import UserResponse
 
 logger = logging.getLogger(__name__)
 
 # HTTP Bearer token scheme
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     auth_service: AuthService = Depends(get_auth_service)
 ) -> dict:
     """
@@ -22,6 +20,13 @@ async def get_current_user(
     Raises:
         HTTPException: If token is invalid or user not found
     """
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     token = credentials.credentials
     
     # Decode token
@@ -41,9 +46,11 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Get user ID from payload (convert from string to int)
+    # Resolve identity and membership from signed identifiers. Role and tenant
+    # ownership are deliberately loaded from the database on every request.
     user_id_str = payload.get("sub")
-    if user_id_str is None:
+    membership_id = payload.get("mid")
+    if user_id_str is None or membership_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token payload",
@@ -60,7 +67,7 @@ async def get_current_user(
         )
     
     # Get user from database
-    user = auth_service.get_user_by_id(user_id)
+    user = auth_service.get_principal(user_id, membership_id)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -112,7 +119,7 @@ def require_role(*allowed_roles: str):
         if user_role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied. Required roles: {', '.join(allowed_roles)}"
+                detail="You do not have permission to perform this action"
             )
         return current_user
     
@@ -120,48 +127,26 @@ def require_role(*allowed_roles: str):
 
 
 # Specific role dependencies
-async def require_admin(current_user: dict = Depends(get_current_active_user)) -> dict:
-    """Require company_admin role."""
-    if current_user.get("role") != "company_admin":
+async def require_owner(current_user: dict = Depends(get_current_active_user)) -> dict:
+    """Require organization owner role."""
+    if current_user.get("role") != "owner":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
+            detail="Organization owner access required"
+        )
+    return current_user
+
+
+async def require_admin(current_user: dict = Depends(get_current_active_user)) -> dict:
+    """Require organization owner or admin role."""
+    if current_user.get("role") not in ["owner", "admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Organization administrator access required"
         )
     return current_user
 
 
 async def require_hr_or_admin(current_user: dict = Depends(get_current_active_user)) -> dict:
-    """Require hr_manager or company_admin role."""
-    if current_user.get("role") not in ["company_admin", "hr_manager"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="HR or Admin access required"
-        )
-    return current_user
-
-
-# Legacy API key authentication (for backward compatibility during migration)
-from fastapi import Header
-
-
-async def verify_api_key(x_api_key: Optional[str] = Header(None)):
-    """
-    Legacy API key authentication.
-    This is kept for backward compatibility but should be deprecated.
-    """
-    from app.config import get_settings
-    settings = get_settings()
-    
-    if x_api_key is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key required"
-        )
-    
-    if x_api_key != settings.api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key"
-        )
-    
-    return x_api_key
+    """Backward-compatible dependency name for owner/admin operations."""
+    return await require_admin(current_user)

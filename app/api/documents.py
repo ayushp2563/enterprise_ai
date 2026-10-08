@@ -1,23 +1,20 @@
 import logging
+import hashlib
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
-from typing import List, Optional
+from typing import Optional
 import psycopg2
 from psycopg2.extras import Json
-from datetime import datetime
-from app.models.documents import Document
-from app.services.document_ingestion import get_ingestion_service
+from app.services.document_storage import get_document_storage
 from app.services.vector_store import get_vector_store
 from app.security.auth import get_current_user, require_hr_or_admin
 from app.config import get_settings
-import tempfile
-import os
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
 settings = get_settings()
 
 
-@router.post("/upload")
+@router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
 async def upload_document(
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
@@ -31,89 +28,119 @@ async def upload_document(
     """
     try:
         # Validate file type
-        allowed_extensions = ['pdf', 'docx', 'doc', 'txt', 'md']
-        file_ext = file.filename.split('.')[-1].lower()
+        allowed_extensions = {
+            "pdf": {"application/pdf"},
+            "docx": {
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            },
+            "txt": {"text/plain", "application/octet-stream"},
+            "md": {"text/markdown", "text/plain", "application/octet-stream"},
+        }
+        filename = file.filename or "document"
+        file_ext = filename.rsplit('.', 1)[-1].lower()
         
         if file_ext not in allowed_extensions:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}"
             )
-        
-        # Check file size (10MB limit)
-        content = await file.read()
-        if len(content) > 10 * 1024 * 1024:
+
+        if file.content_type and file.content_type not in allowed_extensions[file_ext]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="File size exceeds 10MB limit"
+                detail="Declared media type does not match the supported document type",
             )
-        
-        # Save file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_ext}') as tmp_file:
-            tmp_file.write(content)
-            tmp_file_path = tmp_file.name
-        
+
+        content = await file.read()
+        if not content:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Uploaded document is empty",
+            )
+        if len(content) > settings.max_upload_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="File size exceeds configured upload limit"
+            )
+
+        checksum = hashlib.sha256(content).hexdigest()
+        storage = get_document_storage()
+        storage_key = storage.save(current_user["company_id"], file_ext, content)
+        conn = None
         try:
-            # Process document
-            ingestion_service = get_ingestion_service()
-            result = ingestion_service.process_document(
-                file_path=tmp_file_path,
-                file_type=file_ext,
-                metadata={"filename": file.filename}
-            )
-            
-            # Store in database with company context
             conn = psycopg2.connect(settings.database_url)
-            cursor = conn.cursor()
-            
-            # Insert document
-            doc_title = title or file.filename
-            cursor.execute(
-                """
-                INSERT INTO documents 
-                (company_id, uploaded_by, title, content, category, metadata, is_active, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, true, %s, %s)
-                RETURNING id
-                """,
-                (
-                    current_user["company_id"],
-                    current_user["id"],
-                    doc_title,
-                    " ".join(result['chunks'][:3]),  # Store first few chunks as preview
-                    category or "General",
-                    Json({"filename": file.filename, "num_chunks": result['num_chunks']}),
-                    datetime.now(),
-                    datetime.now()
-                )
+            with conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT id
+                        FROM documents
+                        WHERE company_id = %s
+                          AND checksum_sha256 = %s
+                          AND is_active = true
+                    """, (current_user["company_id"], checksum))
+                    if cursor.fetchone():
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail="This document has already been uploaded",
+                        )
+
+                    doc_title = title or filename
+                    cursor.execute("""
+                        INSERT INTO documents (
+                            company_id, uploaded_by, title, content, category,
+                            metadata, is_active, original_filename, media_type,
+                            storage_key, checksum_sha256, ingestion_status
+                        )
+                        VALUES (
+                            %s, %s, %s, NULL, %s, %s, true, %s, %s, %s, %s,
+                            'pending'
+                        )
+                        RETURNING id, public_id
+                    """, (
+                        current_user["company_id"],
+                        current_user["id"],
+                        doc_title,
+                        category or "General",
+                        Json({"filename": filename, "size_bytes": len(content)}),
+                        filename,
+                        file.content_type,
+                        storage_key,
+                        checksum,
+                    ))
+                    document_id, public_id = cursor.fetchone()
+
+                    cursor.execute("""
+                        INSERT INTO ingestion_jobs (
+                            company_id, document_id, status, max_attempts
+                        )
+                        VALUES (%s, %s, 'pending', %s)
+                    """, (
+                        current_user["company_id"],
+                        document_id,
+                        settings.ingestion_max_attempts,
+                    ))
+
+            logger.info(
+                "Document accepted for ingestion",
+                extra={
+                    "company_id": current_user["company_id"],
+                    "document_id": document_id,
+                },
             )
-            
-            document_id = cursor.fetchone()[0]
-            conn.commit()
-            
-            # Store chunks with embeddings
-            vector_store = get_vector_store()
-            chunk_ids = vector_store.store_document_chunks(
-                document_id=document_id,
-                chunks=result['chunks'],
-                embeddings=result['embeddings']
-            )
-            
-            cursor.close()
-            conn.close()
-            
-            logger.info(f"User {current_user['email']} uploaded document: {file.filename} (ID: {document_id})")
-            
+
             return {
                 "document_id": document_id,
+                "public_id": str(public_id),
                 "title": doc_title,
                 "category": category or "General",
-                "num_chunks": result['num_chunks'],
-                "status": "processed"
+                "status": "pending",
             }
-            
+        except Exception:
+            storage.delete(storage_key)
+            raise
         finally:
-            # Clean up temp file
-            os.unlink(tmp_file_path)
+            if conn is not None:
+                conn.close()
             
     except HTTPException:
         raise
@@ -142,7 +169,9 @@ async def list_documents(
         if category:
             cursor.execute(
                 """
-                SELECT id, title, category, metadata, uploaded_by, created_at
+                SELECT id, public_id, title, category, metadata, uploaded_by,
+                       original_filename, media_type, ingestion_status,
+                       ingestion_error, created_at
                 FROM documents
                 WHERE company_id = %s AND category = %s AND is_active = true
                 ORDER BY created_at DESC
@@ -152,7 +181,9 @@ async def list_documents(
         else:
             cursor.execute(
                 """
-                SELECT id, title, category, metadata, uploaded_by, created_at
+                SELECT id, public_id, title, category, metadata, uploaded_by,
+                       original_filename, media_type, ingestion_status,
+                       ingestion_error, created_at
                 FROM documents
                 WHERE company_id = %s AND is_active = true
                 ORDER BY created_at DESC
@@ -164,11 +195,16 @@ async def list_documents(
         for row in cursor.fetchall():
             documents.append({
                 "id": row[0],
-                "title": row[1],
-                "category": row[2],
-                "metadata": row[3],
-                "uploaded_by": row[4],
-                "created_at": row[5].isoformat()
+                "public_id": str(row[1]),
+                "title": row[2],
+                "category": row[3],
+                "metadata": row[4],
+                "uploaded_by": row[5],
+                "original_filename": row[6],
+                "media_type": row[7],
+                "ingestion_status": row[8],
+                "ingestion_error": row[9],
+                "created_at": row[10].isoformat()
             })
         
         cursor.close()
@@ -184,7 +220,7 @@ async def list_documents(
         )
 
 
-@router.get("/{document_id}")
+@router.get("/{document_id:int}")
 async def get_document(
     document_id: int,
     current_user: dict = Depends(get_current_user)
@@ -200,7 +236,9 @@ async def get_document(
         
         cursor.execute(
             """
-            SELECT id, title, category, content, metadata, uploaded_by, created_at, updated_at
+            SELECT id, public_id, title, category, content, metadata,
+                   uploaded_by, original_filename, media_type,
+                   ingestion_status, ingestion_error, created_at, updated_at
             FROM documents
             WHERE id = %s AND company_id = %s AND is_active = true
             """,
@@ -216,13 +254,18 @@ async def get_document(
         
         document = {
             "id": row[0],
-            "title": row[1],
-            "category": row[2],
-            "content": row[3],
-            "metadata": row[4],
-            "uploaded_by": row[5],
-            "created_at": row[6].isoformat(),
-            "updated_at": row[7].isoformat()
+            "public_id": str(row[1]),
+            "title": row[2],
+            "category": row[3],
+            "content": row[4],
+            "metadata": row[5],
+            "uploaded_by": row[6],
+            "original_filename": row[7],
+            "media_type": row[8],
+            "ingestion_status": row[9],
+            "ingestion_error": row[10],
+            "created_at": row[11].isoformat(),
+            "updated_at": row[12].isoformat()
         }
         
         cursor.close()
@@ -240,7 +283,7 @@ async def get_document(
         )
 
 
-@router.delete("/{document_id}")
+@router.delete("/{document_id:int}")
 async def delete_document(
     document_id: int,
     current_user: dict = Depends(require_hr_or_admin)
@@ -260,22 +303,37 @@ async def delete_document(
             UPDATE documents 
             SET is_active = false 
             WHERE id = %s AND company_id = %s
-            RETURNING id
+            RETURNING id, storage_key
             """,
             (document_id, current_user["company_id"])
         )
         
-        deleted_id = cursor.fetchone()
+        deleted = cursor.fetchone()
         
-        if not deleted_id:
+        if not deleted:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Document not found"
             )
         
+        cursor.execute("""
+            UPDATE ingestion_jobs
+            SET status = 'failed',
+                completed_at = NOW(),
+                error_code = 'document_deleted',
+                error_detail = 'Document was deleted'
+            WHERE document_id = %s
+              AND status IN ('pending', 'processing')
+        """, (document_id,))
         conn.commit()
         cursor.close()
         conn.close()
+
+        get_vector_store().delete_document_chunks(
+            document_id,
+            current_user["company_id"],
+        )
+        get_document_storage().delete(deleted[1])
         
         logger.info(f"User {current_user['email']} deleted document: {document_id}")
         

@@ -1,7 +1,7 @@
 import logging
 from typing import List, Dict, Any, Optional
 import psycopg2
-from psycopg2.extras import execute_values
+from psycopg2.extras import Json, execute_values
 import numpy as np
 from app.config import get_settings
 
@@ -36,8 +36,11 @@ class VectorStoreService:
     def store_document_chunks(
         self,
         document_id: int,
+        company_id: int,
         chunks: List[str],
-        embeddings: List[List[float]]
+        embeddings: List[List[float]],
+        embedding_model: Optional[str] = None,
+        chunk_metadata: Optional[List[Dict[str, Any]]] = None,
     ) -> List[int]:
         """
         Store document chunks with their embeddings.
@@ -55,14 +58,29 @@ class VectorStoreService:
         try:
             with self.connection.cursor() as cursor:
                 # Prepare data for batch insert
+                metadata_items = chunk_metadata or [{} for _ in chunks]
                 data = [
-                    (document_id, chunk, idx, embedding)
-                    for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings))
+                    (
+                        document_id,
+                        company_id,
+                        chunk,
+                        idx,
+                        embedding,
+                        embedding_model or settings.embedding_model,
+                        metadata.get("page_number"),
+                        Json(metadata),
+                    )
+                    for idx, (chunk, embedding, metadata) in enumerate(
+                        zip(chunks, embeddings, metadata_items)
+                    )
                 ]
                 
                 # Batch insert chunks
                 query = """
-                    INSERT INTO document_chunks (document_id, chunk_text, chunk_index, embedding)
+                    INSERT INTO document_chunks (
+                        document_id, company_id, chunk_text, chunk_index,
+                        embedding, embedding_model, page_number, metadata
+                    )
                     VALUES %s
                     RETURNING id
                 """
@@ -71,7 +89,7 @@ class VectorStoreService:
                     cursor,
                     query,
                     data,
-                    template="(%s, %s, %s, %s::vector)",
+                    template="(%s, %s, %s, %s, %s::vector, %s, %s, %s)",
                     fetch=True
                 )
                 
@@ -114,20 +132,32 @@ class VectorStoreService:
                         dc.document_id,
                         dc.chunk_text,
                         dc.chunk_index,
+                        dc.page_number,
                         d.title,
                         d.metadata,
                         d.category,
                         1 - (dc.embedding <=> %s::vector) as similarity
                     FROM document_chunks dc
                     JOIN documents d ON dc.document_id = d.id
-                    WHERE d.company_id = %s AND d.is_active = true
+                    WHERE dc.company_id = %s
+                      AND d.company_id = %s
+                      AND d.is_active = true
+                      AND 1 - (dc.embedding <=> %s::vector) >= %s
                     ORDER BY dc.embedding <=> %s::vector
                     LIMIT %s
                 """
                 
                 cursor.execute(
                     query,
-                    (query_embedding, company_id, query_embedding, top_k)
+                    (
+                        query_embedding,
+                        company_id,
+                        company_id,
+                        query_embedding,
+                        threshold,
+                        query_embedding,
+                        top_k,
+                    )
                 )
                 
                 results = []
@@ -137,10 +167,11 @@ class VectorStoreService:
                         "document_id": row[1],
                         "chunk_text": row[2],
                         "chunk_index": row[3],
-                        "document_title": row[4],
-                        "metadata": row[5],
-                        "category": row[6],
-                        "similarity": float(row[7])
+                        "page_number": row[4],
+                        "document_title": row[5],
+                        "metadata": row[6],
+                        "category": row[7],
+                        "similarity": float(row[8])
                     })
                 
                 logger.info(f"Found {len(results)} similar chunks for company {company_id}")
@@ -150,7 +181,11 @@ class VectorStoreService:
             logger.error(f"Error performing similarity search: {str(e)}")
             raise
     
-    def get_document_chunks(self, document_id: int) -> List[Dict[str, Any]]:
+    def get_document_chunks(
+        self,
+        document_id: int,
+        company_id: int,
+    ) -> List[Dict[str, Any]]:
         """
         Get all chunks for a specific document.
         
@@ -167,11 +202,11 @@ class VectorStoreService:
                 query = """
                     SELECT id, chunk_text, chunk_index
                     FROM document_chunks
-                    WHERE document_id = %s
+                    WHERE document_id = %s AND company_id = %s
                     ORDER BY chunk_index
                 """
                 
-                cursor.execute(query, (document_id,))
+                cursor.execute(query, (document_id, company_id))
                 
                 results = []
                 for row in cursor.fetchall():
@@ -187,7 +222,7 @@ class VectorStoreService:
             logger.error(f"Error getting document chunks: {str(e)}")
             raise
     
-    def delete_document_chunks(self, document_id: int):
+    def delete_document_chunks(self, document_id: int, company_id: int):
         """
         Delete all chunks for a document.
         
@@ -199,8 +234,11 @@ class VectorStoreService:
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute(
-                    "DELETE FROM document_chunks WHERE document_id = %s",
-                    (document_id,)
+                    """
+                    DELETE FROM document_chunks
+                    WHERE document_id = %s AND company_id = %s
+                    """,
+                    (document_id, company_id)
                 )
                 self.connection.commit()
                 logger.info(f"Deleted chunks for document {document_id}")
