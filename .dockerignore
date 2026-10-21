@@ -1,0 +1,13 @@
+.git
+.github
+.env
+**/.env
+**/.next
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+htmlcov
+node_modules
+tmp
+temp
+*.log

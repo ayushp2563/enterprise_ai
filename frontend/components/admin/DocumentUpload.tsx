@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useUploadDocument } from '@/lib/hooks/useDocuments';
+import { getApiErrorMessage } from '@/lib/api/errors';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -33,6 +34,22 @@ export function DocumentUpload({ categories, onSuccess }: DocumentUploadProps) {
     }
   }, []);
 
+  const handleFileSelect = useCallback((selectedFile: File) => {
+    const allowedTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain', 'text/markdown'];
+    if (!allowedTypes.includes(selectedFile.type)) {
+      toast.error('Invalid file type. Please upload PDF, DOCX, TXT, or MD files.');
+      return;
+    }
+
+    if (selectedFile.size > 10 * 1024 * 1024) {
+      toast.error('File size must be less than 10MB');
+      return;
+    }
+
+    setFile(selectedFile);
+    setTitle((current) => current || selectedFile.name.replace(/\.[^/.]+$/, ''));
+  }, []);
+
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -42,27 +59,7 @@ export function DocumentUpload({ categories, onSuccess }: DocumentUploadProps) {
       const droppedFile = e.dataTransfer.files[0];
       handleFileSelect(droppedFile);
     }
-  }, []);
-
-  const handleFileSelect = (selectedFile: File) => {
-    // Validate file type
-    const allowedTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain', 'text/markdown'];
-    if (!allowedTypes.includes(selectedFile.type)) {
-      toast.error('Invalid file type. Please upload PDF, DOCX, TXT, or MD files.');
-      return;
-    }
-
-    // Validate file size (10MB)
-    if (selectedFile.size > 10 * 1024 * 1024) {
-      toast.error('File size must be less than 10MB');
-      return;
-    }
-
-    setFile(selectedFile);
-    if (!title) {
-      setTitle(selectedFile.name.replace(/\.[^/.]+$/, ''));
-    }
-  };
+  }, [handleFileSelect]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,8 +78,8 @@ export function DocumentUpload({ categories, onSuccess }: DocumentUploadProps) {
           setCategory('');
           onSuccess?.();
         },
-        onError: (error: any) => {
-          toast.error(error.response?.data?.detail || 'Failed to upload document');
+        onError: (error: unknown) => {
+          toast.error(getApiErrorMessage(error, 'Failed to upload document'));
         },
       }
     );

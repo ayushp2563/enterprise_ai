@@ -5,7 +5,7 @@ from app.models.auth import (
     CompanyCreate, CompanyResponse,
     UserLogin, UserResponse,
     TokenResponse, TokenRefresh,
-    InvitationAccept
+    InvitationAccept, LogoutRequest
 )
 from app.services.auth_service import get_auth_service, AuthService
 from app.security.auth import get_current_user
@@ -15,6 +15,34 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+
+
+def build_token_response(
+    auth_service: AuthService,
+    user: dict,
+    refresh_token: str | None = None,
+) -> TokenResponse:
+    """Issue an access token and, when needed, a refresh session."""
+    access_token = auth_service.create_access_token(
+        data={
+            "sub": str(user["id"]),
+            "mid": str(user["membership_id"]),
+        },
+        expires_delta=timedelta(minutes=settings.access_token_expire_minutes)
+    )
+    if refresh_token is None:
+        refresh_token = auth_service.create_refresh_session(
+            user_id=user["id"],
+            membership_id=user["membership_id"],
+        )
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        expires_in=settings.access_token_expire_minutes * 60,
+        user=UserResponse(**user),
+    )
 
 
 @router.post("/register-company", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
@@ -41,24 +69,8 @@ async def register_company(
             admin_full_name=company_data.admin_full_name
         )
         
-        # Generate JWT tokens
-        access_token = auth_service.create_access_token(
-            data={"sub": str(user["id"]), "company_id": user["company_id"], "role": user["role"]},
-            expires_delta=timedelta(minutes=settings.access_token_expire_minutes)
-        )
-        refresh_token = auth_service.create_refresh_token(
-            data={"sub": str(user["id"]), "company_id": user["company_id"]}
-        )
-        
         logger.info(f"Company '{company['name']}' registered successfully")
-        
-        return TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            token_type="bearer",
-            expires_in=settings.access_token_expire_minutes * 60,
-            user=UserResponse(**user)
-        )
+        return build_token_response(auth_service, user)
         
     except ValueError as e:
         raise HTTPException(
@@ -85,7 +97,8 @@ async def login(
         # Authenticate user
         user = auth_service.authenticate_user(
             email=credentials.email,
-            password=credentials.password
+            password=credentials.password,
+            organization_slug=credentials.organization_slug,
         )
         
         if not user:
@@ -95,27 +108,16 @@ async def login(
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
-        # Generate JWT tokens
-        access_token = auth_service.create_access_token(
-            data={"sub": str(user["id"]), "company_id": user["company_id"], "role": user["role"]},
-            expires_delta=timedelta(minutes=settings.access_token_expire_minutes)
-        )
-        refresh_token = auth_service.create_refresh_token(
-            data={"sub": str(user["id"]), "company_id": user["company_id"]}
-        )
-        
-        logger.info(f"User '{user['email']}' logged in successfully")
-        
-        return TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            token_type="bearer",
-            expires_in=settings.access_token_expire_minutes * 60,
-            user=UserResponse(**user)
-        )
+        logger.info("User logged in successfully")
+        return build_token_response(auth_service, user)
         
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
     except Exception as e:
         logger.error(f"Error during login: {str(e)}")
         raise HTTPException(
@@ -133,53 +135,19 @@ async def refresh_token(
     Refresh access token using a refresh token.
     """
     try:
-        # Decode refresh token
-        payload = auth_service.decode_token(token_data.refresh_token)
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid refresh token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
-        # Verify token type
-        if payload.get("type") != "refresh":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token type",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
-        # Get user
-        user_id = payload.get("sub")
-        user = auth_service.get_user_by_id(user_id)
-        
-        if not user or not user.get("is_active"):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found or inactive",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
-        # Generate new tokens
-        access_token = auth_service.create_access_token(
-            data={"sub": str(user["id"]), "company_id": user["company_id"], "role": user["role"]},
-            expires_delta=timedelta(minutes=settings.access_token_expire_minutes)
+        user, new_refresh_token = auth_service.rotate_refresh_session(
+            token_data.refresh_token
         )
-        new_refresh_token = auth_service.create_refresh_token(
-            data={"sub": str(user["id"]), "company_id": user["company_id"]}
-        )
-        
-        return TokenResponse(
-            access_token=access_token,
-            refresh_token=new_refresh_token,
-            token_type="bearer",
-            expires_in=settings.access_token_expire_minutes * 60,
-            user=UserResponse(**user)
-        )
+        return build_token_response(auth_service, user, new_refresh_token)
         
     except HTTPException:
         raise
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     except Exception as e:
         logger.error(f"Error refreshing token: {str(e)}")
         raise HTTPException(
@@ -204,24 +172,8 @@ async def accept_invitation(
             full_name=invitation_data.full_name
         )
         
-        # Generate JWT tokens
-        access_token = auth_service.create_access_token(
-            data={"sub": str(user["id"]), "company_id": user["company_id"], "role": user["role"]},
-            expires_delta=timedelta(minutes=settings.access_token_expire_minutes)
-        )
-        refresh_token = auth_service.create_refresh_token(
-            data={"sub": str(user["id"]), "company_id": user["company_id"]}
-        )
-        
-        logger.info(f"User '{user['email']}' accepted invitation and created account")
-        
-        return TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            token_type="bearer",
-            expires_in=settings.access_token_expire_minutes * 60,
-            user=UserResponse(**user)
-        )
+        logger.info("User accepted invitation and created membership")
+        return build_token_response(auth_service, user)
         
     except ValueError as e:
         raise HTTPException(
@@ -246,16 +198,17 @@ async def get_current_user_info(
     return UserResponse(**current_user)
 
 
-@router.post("/logout")
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
-    current_user: dict = Depends(get_current_user)
+    logout_data: LogoutRequest,
+    current_user: dict = Depends(get_current_user),
+    auth_service: AuthService = Depends(get_auth_service),
 ):
-    """
-    Logout endpoint (client should discard tokens).
-    
-    Note: Since we're using stateless JWT, actual logout is handled client-side
-    by discarding the tokens. In a production system, you might want to implement
-    token blacklisting.
-    """
-    logger.info(f"User '{current_user['email']}' logged out")
-    return {"message": "Successfully logged out"}
+    """Revoke the supplied refresh session."""
+    auth_service.revoke_refresh_session(
+        logout_data.refresh_token,
+        user_id=current_user["id"],
+        membership_id=current_user["membership_id"],
+    )
+    logger.info("User logged out")
+    return None

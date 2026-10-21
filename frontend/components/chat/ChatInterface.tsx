@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { useSubmitQuery } from '@/lib/hooks/useQuery';
+import { getApiErrorMessage } from '@/lib/api/errors';
 import { Loader2, Send, AlertCircle, CheckCircle2, FileText } from 'lucide-react';
 import type { QueryResponse } from '@/types/documents';
 
@@ -59,11 +60,11 @@ export function ChatInterface() {
           };
           setMessages((prev) => [...prev, assistantMessage]);
         },
-        onError: (error: any) => {
+        onError: (error: unknown) => {
           const errorMessage: Message = {
             id: (Date.now() + 1).toString(),
             type: 'assistant',
-            content: error.response?.data?.detail || 'Sorry, I encountered an error. Please try again.',
+            content: getApiErrorMessage(error, 'Sorry, I encountered an error. Please try again.'),
             timestamp: new Date(),
           };
           setMessages((prev) => [...prev, errorMessage]);
@@ -92,7 +93,7 @@ export function ChatInterface() {
             <div>
               <h3 className="text-lg font-semibold">Ask me anything about company policies</h3>
               <p className="text-sm text-muted-foreground mt-2">
-                I'll search through company documents to provide accurate answers
+                I&apos;ll search through company documents to provide accurate answers
               </p>
             </div>
           </div>
@@ -150,7 +151,7 @@ export function ChatInterface() {
                                   <Badge variant="outline" className="text-xs">{source.category}</Badge>
                                 )}
                               </div>
-                              <p className="text-muted-foreground line-clamp-2">{source.chunk_text}</p>
+                              <p className="text-muted-foreground line-clamp-2">{source.excerpt}</p>
                               <p className="text-muted-foreground mt-1">
                                 Relevance: {Math.round(source.similarity * 100)}%
                               </p>

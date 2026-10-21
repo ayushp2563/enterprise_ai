@@ -1,7 +1,9 @@
 import pytest
+from datetime import datetime
+from uuid import uuid4
 from fastapi.testclient import TestClient
 from app.main import app
-from unittest.mock import patch, Mock
+from app.security.auth import get_current_user
 
 client = TestClient(app)
 
@@ -21,38 +23,40 @@ class TestAPIEndpoints:
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
     
-    def test_query_without_api_key(self):
-        """Test query endpoint without API key."""
+    def test_query_without_authentication(self):
+        """Protected query endpoint rejects an anonymous caller."""
         response = client.post(
             "/api/query/",
             json={"question": "Test question"}
         )
         assert response.status_code == 401
     
-    @patch('app.api.query.get_rag_engine')
-    def test_query_with_api_key(self, mock_rag):
-        """Test query endpoint with API key."""
-        # Mock RAG engine
-        mock_engine = Mock()
-        mock_engine.query.return_value = {
-            "answer": "Test answer",
-            "sources": [],
-            "query_time": 0.5,
-            "model_used": "llama-3.3-70b-versatile"
+    def test_authenticated_user_can_read_profile(self):
+        """Authentication context is serialized through the public schema."""
+        now = datetime.now()
+        principal = {
+            "id": 1,
+            "public_id": uuid4(),
+            "company_id": 1,
+            "membership_id": uuid4(),
+            "email": "user@example.com",
+            "full_name": "Test User",
+            "role": "member",
+            "is_active": True,
+            "last_login": None,
+            "created_at": now,
+            "updated_at": now,
         }
-        mock_rag.return_value = mock_engine
-        
-        response = client.post(
-            "/api/query/",
-            json={"question": "Test question"},
-            headers={"X-API-Key": "test_api_key"}
-        )
-        
-        # Will fail without proper API key, but tests the flow
-        # In real tests, you'd set the correct API key
-        assert response.status_code in [200, 401]
+        app.dependency_overrides[get_current_user] = lambda: principal
+        try:
+            response = client.get("/api/auth/me")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        assert response.json()["role"] == "member"
     
-    def test_documents_list_without_api_key(self):
-        """Test documents list without API key."""
+    def test_documents_list_without_authentication(self):
+        """Document listing rejects an anonymous caller."""
         response = client.get("/api/documents/")
         assert response.status_code == 401

@@ -14,7 +14,8 @@ class TestRAGEngine:
         """Create mock services."""
         with patch('app.services.rag_engine.get_ingestion_service') as mock_ingestion, \
              patch('app.services.rag_engine.get_vector_store') as mock_vector, \
-             patch('app.services.rag_engine.get_llm_service') as mock_llm:
+             patch('app.services.rag_engine.get_llm_service') as mock_llm, \
+             patch('app.services.rag_engine.get_hr_escalation_service') as mock_hr:
             
             # Mock ingestion service
             mock_ingestion_instance = Mock()
@@ -40,6 +41,11 @@ class TestRAGEngine:
             mock_llm_instance = Mock()
             mock_llm_instance.generate_response.return_value = "This is a test answer."
             mock_llm.return_value = mock_llm_instance
+
+            mock_hr_instance = Mock()
+            mock_hr_instance.should_escalate_to_hr.return_value = (False, None)
+            mock_hr_instance.calculate_confidence_score.return_value = 0.9
+            mock_hr.return_value = mock_hr_instance
             
             yield {
                 'ingestion': mock_ingestion_instance,
@@ -51,7 +57,7 @@ class TestRAGEngine:
         """Test RAG query with results."""
         engine = RAGEngine()
         
-        result = engine.query("What is the test?")
+        result = engine.query("What is the test?", company_id=1, user_id=1)
         
         assert 'answer' in result
         assert 'sources' in result
@@ -65,7 +71,7 @@ class TestRAGEngine:
         mock_services['vector'].similarity_search.return_value = []
         
         engine = RAGEngine()
-        result = engine.query("What is the test?")
+        result = engine.query("What is the test?", company_id=1, user_id=1)
         
         assert 'answer' in result
         assert "don't have enough information" in result['answer'].lower()

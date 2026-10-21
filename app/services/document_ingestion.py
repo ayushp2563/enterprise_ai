@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import List, Dict, Any
 from pathlib import Path
 import pypdf
@@ -57,6 +58,34 @@ class DocumentIngestionService:
             for page in pdf_reader.pages:
                 text += page.extract_text() + "\n"
         return text.strip()
+
+    def extract_pages(self, file_path: str, file_type: str) -> List[Dict[str, Any]]:
+        """Extract text while preserving page locations when the format has pages."""
+        if file_type.lower() == "pdf":
+            pages = []
+            with open(file_path, "rb") as file:
+                for page_number, page in enumerate(
+                    pypdf.PdfReader(file).pages,
+                    start=1,
+                ):
+                    pages.append({
+                        "page_number": page_number,
+                        "text": page.extract_text() or "",
+                    })
+            return pages
+        return [{
+            "page_number": None,
+            "text": self.extract_text(file_path, file_type),
+        }]
+
+    @staticmethod
+    def clean_text(text: str) -> str:
+        """Normalize extracted text without interpreting document instructions."""
+        text = text.replace("\x00", "")
+        text = re.sub(r"\r\n?", "\n", text)
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
     
     def _extract_from_docx(self, file_path: str) -> str:
         """Extract text from DOCX file."""
@@ -110,18 +139,25 @@ class DocumentIngestionService:
         """
         logger.info(f"Processing document: {file_path}")
         
-        # Extract text
-        text = self.extract_text(file_path, file_type)
+        chunks = []
+        chunk_metadata = []
+        for page in self.extract_pages(file_path, file_type):
+            page_text = self.clean_text(page["text"])
+            if not page_text:
+                continue
+            for chunk in self.chunk_text(page_text):
+                chunks.append(chunk)
+                chunk_metadata.append({
+                    "page_number": page["page_number"],
+                    **(metadata or {}),
+                })
         
-        # Chunk text
-        chunks = self.chunk_text(text)
-        
-        # Generate embeddings
-        embeddings = self.generate_embeddings(chunks)
+        embeddings = self.generate_embeddings(chunks) if chunks else []
         
         return {
             "chunks": chunks,
             "embeddings": embeddings,
+            "chunk_metadata": chunk_metadata,
             "metadata": metadata or {},
             "num_chunks": len(chunks)
         }

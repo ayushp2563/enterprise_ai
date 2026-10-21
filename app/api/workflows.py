@@ -2,7 +2,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.models.workflows import WorkflowRequest, WorkflowResponse, WorkflowStatus
 from app.services.workflow_automation import get_workflow_service
-from app.security.auth import verify_api_key
+from app.security.auth import require_admin
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -12,14 +12,14 @@ router = APIRouter(prefix="/api/workflows", tags=["Workflows"])
 @router.post("/execute", response_model=WorkflowResponse)
 async def execute_workflow(
     request: WorkflowRequest,
-    api_key: str = Depends(verify_api_key)
+    current_user: dict = Depends(require_admin)
 ) -> WorkflowResponse:
     """
     Execute a workflow.
     
     Args:
         request: Workflow execution request
-        api_key: Validated API key
+        current_user: Authenticated organization owner or admin
         
     Returns:
         Workflow execution result

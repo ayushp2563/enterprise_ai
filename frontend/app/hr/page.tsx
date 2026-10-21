@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 
 export default function HRPage() {
   return (
-    <ProtectedRoute allowedRoles={['hr_manager', 'company_admin']}>
+    <ProtectedRoute allowedRoles={['admin', 'owner']}>
       <div className="flex flex-col h-screen">
         <DashboardHeader />
         

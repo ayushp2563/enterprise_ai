@@ -20,8 +20,8 @@ CREATE TABLE IF NOT EXISTS companies (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_companies_slug ON companies(slug);
-CREATE INDEX idx_companies_domain ON companies(domain);
+CREATE INDEX IF NOT EXISTS idx_companies_slug ON companies(slug);
+CREATE INDEX IF NOT EXISTS idx_companies_domain ON companies(domain);
 
 -- ============================================================================
 -- 2. CREATE USERS TABLE
@@ -41,9 +41,9 @@ CREATE TABLE IF NOT EXISTS users (
     UNIQUE(company_id, email)
 );
 
-CREATE INDEX idx_users_company_id ON users(company_id);
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_users_company_id ON users(company_id);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 
 -- ============================================================================
 -- 3. CREATE INVITATIONS TABLE
@@ -61,9 +61,9 @@ CREATE TABLE IF NOT EXISTS invitations (
     UNIQUE(company_id, email)
 );
 
-CREATE INDEX idx_invitations_company_id ON invitations(company_id);
-CREATE INDEX idx_invitations_token ON invitations(token);
-CREATE INDEX idx_invitations_email ON invitations(email);
+CREATE INDEX IF NOT EXISTS idx_invitations_company_id ON invitations(company_id);
+CREATE INDEX IF NOT EXISTS idx_invitations_token ON invitations(token);
+CREATE INDEX IF NOT EXISTS idx_invitations_email ON invitations(email);
 
 -- ============================================================================
 -- 4. MODIFY DOCUMENTS TABLE (Add Multi-Tenancy)
@@ -71,23 +71,27 @@ CREATE INDEX idx_invitations_email ON invitations(email);
 -- Add columns if they don't exist
 DO $$ 
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name='documents' AND column_name='company_id') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='documents' AND column_name='company_id') THEN
         ALTER TABLE documents ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name='documents' AND column_name='uploaded_by') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='documents' AND column_name='uploaded_by') THEN
         ALTER TABLE documents ADD COLUMN uploaded_by INTEGER REFERENCES users(id);
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name='documents' AND column_name='category') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='documents' AND column_name='category') THEN
         ALTER TABLE documents ADD COLUMN category VARCHAR(100);
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name='documents' AND column_name='is_active') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='documents' AND column_name='is_active') THEN
         ALTER TABLE documents ADD COLUMN is_active BOOLEAN DEFAULT true;
     END IF;
 END $$;
@@ -101,28 +105,33 @@ CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category);
 -- ============================================================================
 DO $$ 
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name='query_logs' AND column_name='company_id') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='query_logs' AND column_name='company_id') THEN
         ALTER TABLE query_logs ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE;
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name='query_logs' AND column_name='user_id') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='query_logs' AND column_name='user_id') THEN
         ALTER TABLE query_logs ADD COLUMN user_id INTEGER REFERENCES users(id);
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name='query_logs' AND column_name='confidence_score') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='query_logs' AND column_name='confidence_score') THEN
         ALTER TABLE query_logs ADD COLUMN confidence_score FLOAT;
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name='query_logs' AND column_name='escalated_to_hr') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='query_logs' AND column_name='escalated_to_hr') THEN
         ALTER TABLE query_logs ADD COLUMN escalated_to_hr BOOLEAN DEFAULT false;
     END IF;
     
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name='query_logs' AND column_name='feedback_rating') THEN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public'
+                     AND table_name='query_logs' AND column_name='feedback_rating') THEN
         ALTER TABLE query_logs ADD COLUMN feedback_rating INTEGER;
     END IF;
 END $$;
@@ -149,10 +158,10 @@ CREATE TABLE IF NOT EXISTS hr_escalations (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_hr_escalations_company_id ON hr_escalations(company_id);
-CREATE INDEX idx_hr_escalations_user_id ON hr_escalations(user_id);
-CREATE INDEX idx_hr_escalations_status ON hr_escalations(status);
-CREATE INDEX idx_hr_escalations_created_at ON hr_escalations(created_at);
+CREATE INDEX IF NOT EXISTS idx_hr_escalations_company_id ON hr_escalations(company_id);
+CREATE INDEX IF NOT EXISTS idx_hr_escalations_user_id ON hr_escalations(user_id);
+CREATE INDEX IF NOT EXISTS idx_hr_escalations_status ON hr_escalations(status);
+CREATE INDEX IF NOT EXISTS idx_hr_escalations_created_at ON hr_escalations(created_at);
 
 -- ============================================================================
 -- 7. CREATE DEFAULT COMPANY FOR EXISTING DATA

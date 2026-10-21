@@ -1,6 +1,9 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
+from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field
+
+MembershipRole = Literal["owner", "admin", "member"]
 
 
 class CompanyBase(BaseModel):
@@ -13,7 +16,7 @@ class CompanyCreate(CompanyBase):
     """Company creation with admin user."""
     slug: str = Field(..., min_length=3, max_length=100, pattern=r'^[a-z0-9-]+$')
     admin_email: EmailStr
-    admin_password: str = Field(..., min_length=8, max_length=72)
+    admin_password: str = Field(..., min_length=8, max_length=256)
     admin_full_name: str = Field(..., min_length=1, max_length=255)
 
 
@@ -29,6 +32,7 @@ class CompanyUpdate(BaseModel):
 class CompanyResponse(CompanyBase):
     """Company response model."""
     id: int
+    public_id: Optional[UUID] = None
     slug: str
     settings: dict
     subscription_tier: str
@@ -50,28 +54,36 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     """User creation model."""
-    password: str = Field(..., min_length=8)
-    role: str = Field(default='employee', pattern=r'^(company_admin|hr_manager|employee)$')
+    password: str = Field(..., min_length=8, max_length=256)
+    role: MembershipRole = "member"
 
 
 class UserLogin(BaseModel):
     """User login model."""
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=1, max_length=256)
+    organization_slug: Optional[str] = Field(
+        None,
+        min_length=3,
+        max_length=100,
+        pattern=r'^[a-z0-9-]+$'
+    )
 
 
 class UserUpdate(BaseModel):
     """User update model."""
     full_name: Optional[str] = Field(None, min_length=1, max_length=255)
-    role: Optional[str] = Field(None, pattern=r'^(company_admin|hr_manager|employee)$')
+    role: Optional[MembershipRole] = None
     is_active: Optional[bool] = None
 
 
 class UserResponse(UserBase):
     """User response model."""
     id: int
+    public_id: Optional[UUID] = None
     company_id: int
-    role: str
+    membership_id: UUID
+    role: MembershipRole
     is_active: bool
     last_login: Optional[datetime]
     created_at: datetime
@@ -98,7 +110,7 @@ class TokenRefresh(BaseModel):
 class InvitationCreate(BaseModel):
     """Invitation creation model."""
     email: EmailStr
-    role: str = Field(default='employee', pattern=r'^(company_admin|hr_manager|employee)$')
+    role: MembershipRole = "member"
 
 
 class InvitationResponse(BaseModel):
@@ -106,8 +118,7 @@ class InvitationResponse(BaseModel):
     id: int
     company_id: int
     email: str
-    role: str
-    token: str
+    role: MembershipRole
     invited_by: Optional[int]
     expires_at: datetime
     accepted_at: Optional[datetime]
@@ -117,8 +128,18 @@ class InvitationResponse(BaseModel):
         from_attributes = True
 
 
+class InvitationCreatedResponse(InvitationResponse):
+    """Invitation metadata plus the one-time delivery secret."""
+    invitation_token: str
+
+
 class InvitationAccept(BaseModel):
     """Invitation acceptance model."""
     token: str
-    password: str = Field(..., min_length=8, max_length=72)
+    password: str = Field(..., min_length=8, max_length=256)
     full_name: str = Field(..., min_length=1, max_length=255)
+
+
+class LogoutRequest(BaseModel):
+    """Refresh session to revoke during logout."""
+    refresh_token: str

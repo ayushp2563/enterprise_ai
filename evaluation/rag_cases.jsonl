@@ -1,0 +1,6 @@
+{"id":"vacation-allowance-new","question":"How many vacation days do employees with two years of service receive?","expected_documents":["Company Vacation Policy"],"expected_terms":["15","days"],"should_abstain":false}
+{"id":"vacation-carryover","question":"How many unused vacation days may be carried over?","expected_documents":["Company Vacation Policy"],"expected_terms":["5","days"],"should_abstain":false}
+{"id":"vacation-request","question":"How far in advance should vacation be requested?","expected_documents":["Company Vacation Policy"],"expected_terms":["2 weeks"],"should_abstain":false}
+{"id":"onboarding-security","question":"When must a new employee complete security training?","expected_documents":["Employee Onboarding Guide"],"expected_terms":["30 days"],"should_abstain":false}
+{"id":"it-support","question":"How can a new employee contact IT support?","expected_documents":["Employee Onboarding Guide"],"expected_terms":["support@company.com","5555"],"should_abstain":false}
+{"id":"unsupported-parking","question":"What is the monthly employee parking fee?","expected_documents":[],"expected_terms":[],"should_abstain":true}

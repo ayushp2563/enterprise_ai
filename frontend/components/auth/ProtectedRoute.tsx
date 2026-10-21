@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/context/AuthContext';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  allowedRoles?: Array<'company_admin' | 'hr_manager' | 'employee'>;
+  allowedRoles?: Array<'owner' | 'admin' | 'member'>;
 }
 
 export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
@@ -19,9 +19,9 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
         router.push('/login');
       } else if (allowedRoles && !allowedRoles.includes(user.role)) {
         // Redirect to appropriate dashboard based on role
-        if (user.role === 'company_admin') {
+        if (user.role === 'owner') {
           router.push('/admin');
-        } else if (user.role === 'hr_manager') {
+        } else if (user.role === 'admin') {
           router.push('/hr');
         } else {
           router.push('/employee');

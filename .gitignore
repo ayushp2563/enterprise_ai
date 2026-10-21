@@ -12,7 +12,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
 lib64/
 parts/
 sdist/
@@ -25,7 +25,8 @@ wheels/
 # Environment
 .env
 .env.local
-.env.example
+!.env.example
+!**/.env.example
 
 # IDE
 .vscode/
@@ -50,6 +51,10 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Node
+node_modules/
+frontend/.next/
 
 # Docker
 docker-compose.override.yml
